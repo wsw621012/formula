@@ -119,6 +119,30 @@ class ImageProcessor(object):
         return img
 
     @staticmethod
+    def wall_detection (sr, sg, sb):
+        black_count = 0
+        yellow_count = 0
+        for i in range(len(sr) / 10):
+            for j in range(len(sr[i]) / 10):
+                inverse_i = len(sr)/8 + i
+                inverse_j = len(sr[i]) - 1 - j
+
+                if sr[i][j] == 0 and sg[i][j] == 0 and sb[i][j] == 0:
+                    black_count += 1
+                if sr[inverse_i][inverse_j] == 0 and sg[inverse_i][inverse_j] == 0 and sb[inverse_i][inverse_j] == 0:
+                    yellow_count += 1
+
+        is_left_wall=False
+        is_right_wall=False
+
+        if black_count>=320:
+            is_left_wall = True
+        elif yellow_count>=40:
+            if yellow_count>=40:
+                is_right_wall=True
+        return is_left_wall, is_right_wall
+
+    @staticmethod
     def find_steering_angle_by_color(img):
         r, g, b      = cv2.split(img)
         image_height = img.shape[0]

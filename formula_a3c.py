@@ -115,12 +115,13 @@ class Worker():
                 d = False
 
                 payload = self.car.get_state()
+
                 steering_angle = float(payload["steering_angle"])
                 throttle = float(payload["throttle"])
                 speed = float(payload["speed"])
                 brakes = float(payload["brakes"])
                 cv2_img = ImageProcessor.preprocess(payload["image"])
-                s = process_frame(cv2_img.copy())
+                s = process_frame(cv2_img)
 
                 rnn_state = self.local_AC.state_init
                 self.batch_rnn_state = rnn_state
@@ -133,6 +134,7 @@ class Worker():
                         feed_dict={self.local_AC.inputs:[s],
                         self.local_AC.state_in[0]:rnn_state[0],
                         self.local_AC.state_in[1]:rnn_state[1]})
+
                     aa = np.random.choice(a_dist[0],p=a_dist[0])
                     aa = np.argmax(a_dist == aa)
                     action = Action(aa)
@@ -146,6 +148,7 @@ class Worker():
 
                     # get response
                     payload = self.car.get_state()
+
                     cv2_img = ImageProcessor.preprocess(payload["image"])
                     steering_angle = float(payload["steering_angle"])
                     throttle = float(payload["throttle"])
@@ -158,7 +161,7 @@ class Worker():
                     d = self.car.is_episode_finished()
 
                     if d == False:
-                        s_ = process_frame(cv2_img.copy())
+                        s_ = process_frame(cv2_img)
                     else:
                         s_ = s
 

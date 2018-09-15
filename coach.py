@@ -1,13 +1,8 @@
 from image_processor import ImageProcessor
 from action import Action
 from time import time
-import numpy as np
-import operator
-import math
-import cv2
-import os
-from PIL  import Image
 
+import math
 
 class PID:
     def __init__(self, Kp, Ki, Kd, max_integral, min_interval = 0.001, set_point = 0.0, last_time = None):
@@ -97,77 +92,61 @@ class Coach(object):
     #MAX_HISTORY_COUNT = 50
     #MIN_HISTORY_COUNT = 10
 
+    MAX_SPEED = 2.0
     def __init__(self):
         self._steering_pid = PID(Kp=0.3, Ki=0.01, Kd=0.1, max_integral=10)
         self.count = 0
-        
-        self.delta_angle_history = [0,0]
-        self.angle_history = [0,0]
+        self.expected_angle_history = [0, 0]
+        self.min_delta_angle = self.max_delta_angle_by_speed(self.MAX_SPEED)
+
+    def max_delta_angle_by_speed(self, speed):
+        max_delta_angle = 90 * math.exp(-2*speed)
+        if max_delta_angle > 45:
+            max_delta_angle = 45
+        return max_delta_angle
 
     def alter_action(self, cv2_image, speed, steering_angle, throttle, brakes):
         #print("-- angle:%.2f, throttle:%.2f, speed:%.2f" % (steering_angle, throttle, speed))
         expected_angle = ImageProcessor.find_steering_angle_by_color(cv2_image)
         expected_angle = ImageProcessor.rad2deg(self._steering_pid.update(-expected_angle))
-        self.angle_history.append(expected_angle)
-        self.angle_history = self.angle_history[-2:]
+        self.expected_angle_history.append(expected_angle)
+        self.expected_angle_history = self.expected_angle_history[-2:]
 
-        print("angle now:%.2f, should be:%.2f - speed:%.2f" % (steering_angle, expected_angle, speed))
-        delta_angle = expected_angle - steering_angle
-        self.delta_angle_history.append(delta_angle)
-        self.delta_angle_history = self.delta_angle_history[-2:]
+        max_delta_angle = self.max_delta_angle_by_speed(speed)
 
+        print("angle: %.2f, expected: %.2f, max_delta_angle:%.2f" % (steering_angle, expected_angle, max_delta_angle))
 
         if speed == 0 and throttle == 0 and brakes == 0:
             return Action.Accelerate
-        elif abs(delta_angle) < 3:
+
+        if expected_angle == 0:
             return Action.Accelerate
-        elif delta_angle > 45:
-            return Action.BrakeAndTurnRight
-        elif delta_angle < -45:
-            return Action.BrakeAndTurnLeft
-        elif delta_angle > 30:
-            return Action.TurnRight
-        elif delta_angle < -30:
-            return Action.TurnLeft
-        elif delta_angle > 15:
-            if (self.angle_history[0] < 0) and (self.angle_history[1] < 0) and (self.angle_history[0] < self.angle_history[1]):
-                return Action.NoAction
-            elif (self.angle_history[0] > 0) and (self.angle_history[1] > 0) and (self.angle_history[0] > self.angle_history[1]):
-                return Action.NoAction
-            else:
-                return Action.AccelerateAndTurnRight
-        elif delta_angle < -15:
-            if (self.angle_history[0] < 0) and (self.angle_history[1] < 0) and (self.angle_history[0] < self.angle_history[1]):
-                return Action.NoAction
-            elif (self.angle_history[0] > 0) and (self.angle_history[1] > 0) and (self.angle_history[0] > self.angle_history[1]):
-                return Action.NoAction
-            else:
-                return Action.AccelerateAndTurnLeft
-        elif delta_angle > 0:
-            if delta_angle < self.delta_angle_history[0]:
-                return Action.NoAction
+
+        #if abs(expected_angle) < self.min_delta_angle:
+        #    return Action.Accelerate
+
+        if expected_angle > 0 and steering_angle >= 0:
+            if (expected_angle > steering_angle) and (max_delta_angle <= expected_angle):
+                return Action.TurnRight
             else:
                 return Action.Accelerate
-        elif delta_angle < 0:
-            if delta_angle > self.delta_angle_history[0]:
+
+        if expected_angle > 0 and steering_angle <= 0:
+            if max_delta_angle <= expected_angle:
+                return Action.TurnRight
+            else:
                 return Action.NoAction
+
+        if expected_angle < 0 and steering_angle <= 0:
+            if (expected_angle < steering_angle) and (max_delta_angle <= -expected_angle):
+                return Action.TurnLeft
             else:
                 return Action.Accelerate
-        else:
-            return Action.NoAction
-        '''
-        elif abs(delta_angle) > float(self.angle_step[idx]):
-            if delta_angle < 0:
-                if idx == 4:
-                    return Action.BrakeAndTurnLeft
-                elif idx == 0:
-                    return Action.AccelerateAndTurnLeft
-                else:
-                    return Action.TurnLeft
+
+        if expected_angle < 0 and steering_angle >= 0:
+            if max_delta_angle <= -expected_angle:
+                return Action.TurnLeft
             else:
-                if idx == 4:
-                    return Action.BrakeAndTurnRight
-                elif idx == 0:
-                    return Action.AccelerateAndTurnRight
-                else:
-                    return Action.TurnRight '''
+                return Action.NoAction
+
+        return Action.NoAction

@@ -23,22 +23,27 @@ def logit(msg):
 
 class FormulaGame(object):
     MAX_SPEED = 2.0
-    THROTTLE_STEP = 1.0 / 5
+    #STEP_ANGLE = 2
+
+    SPEED_UP = 1.0 # 1 m/sec^2
+    SPEED_DOWN = 0.0 # -0.5 m/sec^2
+    BRAKE = -1.0 # -2 m/sec^2
 
     def __init__(self, sio):
-        self.angle_step = [15, 12, 9, 6, 3]
-        self.max_speed_range = [0.0, 0.4, 0.8, 1.2, 1.6]
         self.queue = Queue(1)
         self.command = Queue(1)
         self.sio = sio
         self.is_finished = False
+        self.min_delta_angle = self.max_delta_angle_by_speed(self.MAX_SPEED)
 
         @sio.on('telemetry')
         def telemetry(sid, dashboard):
             if dashboard:
-                if dashboard['status'] != '0' or float(dashboard['time']) > 90.0:
+                if dashboard['status'] != '0' or int(dashboard['lap']) > 5:
                     self.is_finished = True
+
                 self.queue.put(dashboard)
+
                 cmd = self.command.get()
                 if cmd is None:
                     self.is_finished = False
@@ -53,6 +58,7 @@ class FormulaGame(object):
         @sio.on('connect')
         def connect(sid, environ):
             self.send_control(0, 0)
+            print("on connect")
 
     def reward(self, speed, throttle, brakes):
         # crash
@@ -69,48 +75,60 @@ class FormulaGame(object):
         else:
             return log_speed
 
+    def max_delta_angle_by_speed(self, speed):
+        max_delta_angle = 90 * math.exp(-2*speed)
+        if max_delta_angle > 45:
+            max_delta_angle = 45
+        return max_delta_angle
+
     def exec_action(self, action, speed, steering_angle, throttle, brakes):
+        max_delta_angle = self.max_delta_angle_by_speed(speed)
 
-        idx = 0;
-        for i in range(5):
-            idx = 4 - i
-            if speed >= self.max_speed_range[idx]:
-                break;
-        print("action = %s" % (action.name))
-
+        print("action = %s, max_delta_angle = %.2f, speed = %.2f, angle = %.2f, throttle = %.2f" % (action.name, max_delta_angle, speed, steering_angle, throttle))
+        print("===")
         if action == 1:
             #Accelerate
-            return 0.0, min(1.0, throttle + self.THROTTLE_STEP)
+            if abs(steering_angle) < self.min_delta_angle:
+                return 0.0, 1
+            if steering_angle > max_delta_angle:
+                return max_delta_angle, 1
+            if steering_angle < -max_delta_angle:
+                return -max_delta_angle, 1
+            return 0.0, 1
         elif action == 2:
             #Brake
-            return 0.0, max(0.0, throttle - self.THROTTLE_STEP)
+            if speed > 0.5:
+                return throttle_angle, -1
+            else:
+                return throttle_angle, 0.0
         elif action == 3:
             #TurnLeft
-            angle = min(0, steering_angle) - float(self.angle_step[idx])
-            return max(-45.0, angle), throttle
+            return -max_delta_angle, 0
         elif action == 4:
             #TurnRight
-            angle = max(0, steering_angle) + float(self.angle_step[idx])
-            return min(45.0, angle), throttle
+            return max_delta_angle, 0
         elif action == 5:
             #AccelerateAndTurnLeft
-            angle = min(0, steering_angle) - float(self.angle_step[idx])
-            return max(-45, angle), throttle + self.THROTTLE_STEP
+            return -max_delta_angle, 1
         elif action == 6:
             #AccelerateAndTurnRight
-            angle = max(0, steering_angle) + float(self.angle_step[idx])
-            return min(45, angle), throttle + self.THROTTLE_STEP
+            return max_delta_angle, 1
         elif action == 7:
             #BrakeAndTurnLeft
-            angle = min(0, steering_angle) - float(self.angle_step[idx])
-            return max(-45, angle), max(0, throttle - self.THROTTLE_STEP)
+            if speed > 1:
+                return -max_delta_angle, -1
+            else:
+                return -max_delta_angle, 0
         elif action == 8:
             #BrakeAndTurnRight
-            angle = max(0, steering_angle) + float(self.angle_step[idx])
-            return min(45, angle), max(0, throttle - self.THROTTLE_STEP)
+            if speed > 1:
+                return max_delta_angle, -1
+            else:
+                return max_delta_angle, 0
         else:
             #NoAction
-            return steering_angle, throttle
+            #return steering_angle, throttle
+            return 0, 0
 
     def is_episode_finished(self):
         return self.is_finished
@@ -148,7 +166,7 @@ class FormulaGame(object):
 
 
 gamma = .99 # discount rate for advantage estimation and reward discounting
-load_model = True
+load_model = False
 model_path = './model'
 s_size = 80 * 80 * 3 # Observations are greyscale frames of 84 * 84 * (1:gray, 3:RGB)
 a_size = len(Action) # Action(enum)
@@ -172,11 +190,9 @@ if __name__ == "__main__":
         trainer = tf.train.AdamOptimizer(learning_rate=1e-4)
         master_network = AC_Network(s_size,a_size,'global',None) # Generate global network
         #num_workers = multiprocessing.cpu_count() # Set workers to number of available CPU threads
-        num_workers = 1
-        workers = []
+
         # Create worker classes
-        for i in range(num_workers):
-            workers.append(Worker(FormulaGame(sio),i,s_size,a_size,trainer,model_path,global_episodes))
+        worker = Worker(FormulaGame(sio),0,s_size,a_size,trainer,model_path,global_episodes)
         saver = tf.train.Saver(max_to_keep=5)
 
     with tf.Session() as sess:
@@ -190,14 +206,13 @@ if __name__ == "__main__":
 
         # This is where the asynchronous magic happens.
         # Start the "work" process for each worker in a separate threat.
-        worker_threads = []
-        for worker in workers:
-            worker_work = lambda: worker.work(max_episode_length,gamma,sess,coord,saver)
-            t = threading.Thread(target=(worker_work))
-            t.start()
-            #sleep(0.5)
-            worker_threads.append(t)
+
+        worker_work = lambda: worker.work(max_episode_length,gamma,sess,coord,saver)
+        t = threading.Thread(target=(worker_work))
+        t.start()
+
+        #sleep(0.5)
 
         app = socketio.Middleware(sio, Flask(__name__))
         eventlet.wsgi.server(eventlet.listen(('', 4567)), app)
-        coord.join(worker_threads)
+        #coord.join(worker_threads)
