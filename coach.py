@@ -100,7 +100,7 @@ class Coach(object):
         self.min_delta_angle = self.max_delta_angle_by_speed(self.MAX_SPEED)
 
     def max_delta_angle_by_speed(self, speed):
-        max_delta_angle = 90 * math.exp(-2*speed)
+        max_delta_angle = 90 * math.exp(-1.5*speed)
         if max_delta_angle > 45:
             max_delta_angle = 45
         return max_delta_angle
@@ -109,8 +109,8 @@ class Coach(object):
         #print("-- angle:%.2f, throttle:%.2f, speed:%.2f" % (steering_angle, throttle, speed))
         expected_angle = ImageProcessor.find_steering_angle_by_color(cv2_image)
         expected_angle = ImageProcessor.rad2deg(self._steering_pid.update(-expected_angle))
-        self.expected_angle_history.append(expected_angle)
-        self.expected_angle_history = self.expected_angle_history[-2:]
+        self.expected_angle_history[0] = self.expected_angle_history[1]
+        self.expected_angle_history[1] = expected_angle
 
         max_delta_angle = self.max_delta_angle_by_speed(speed)
 
@@ -122,7 +122,10 @@ class Coach(object):
         if expected_angle == 0:
             return Action.Accelerate
 
-        #if abs(expected_angle) < self.min_delta_angle:
+        #if expected_angle < 0 and (self.expected_angle_history[0] <= expected_angle):
+        #    return Action.Accelerate
+
+        #if expected_angle > 0 and (self.expected_angle_history[0] >= expected_angle):
         #    return Action.Accelerate
 
         if expected_angle > 0 and steering_angle >= 0:
@@ -149,4 +152,5 @@ class Coach(object):
             else:
                 return Action.NoAction
 
+        #return Action.Accelerate
         return Action.NoAction

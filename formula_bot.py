@@ -76,7 +76,7 @@ class FormulaGame(object):
             return log_speed
 
     def max_delta_angle_by_speed(self, speed):
-        max_delta_angle = 90 * math.exp(-2*speed)
+        max_delta_angle = 90 * math.exp(-1.5*speed)
         if max_delta_angle > 45:
             max_delta_angle = 45
         return max_delta_angle
@@ -90,9 +90,9 @@ class FormulaGame(object):
             #Accelerate
             if abs(steering_angle) < self.min_delta_angle:
                 return 0.0, 1
-            if steering_angle > max_delta_angle:
+            if steering_angle >= max_delta_angle:
                 return max_delta_angle, 1
-            if steering_angle < -max_delta_angle:
+            if steering_angle <= -max_delta_angle:
                 return -max_delta_angle, 1
             return 0.0, 1
         elif action == 2:
@@ -103,10 +103,10 @@ class FormulaGame(object):
                 return throttle_angle, 0.0
         elif action == 3:
             #TurnLeft
-            return -max_delta_angle, 0
+            return -max_delta_angle, 0.2
         elif action == 4:
             #TurnRight
-            return max_delta_angle, 0
+            return max_delta_angle, 0.2
         elif action == 5:
             #AccelerateAndTurnLeft
             return -max_delta_angle, 1
