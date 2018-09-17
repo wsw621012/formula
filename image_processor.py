@@ -94,7 +94,7 @@ class ImageProcessor(object):
 
     @staticmethod
     def _crop_image(img):
-        bottom_half_ratios = (0.55, 1.0)
+        bottom_half_ratios = (0.7, 1.0)
         bottom_half_slice  = slice(*(int(x * img.shape[0]) for x in bottom_half_ratios))
         bottom_half        = img[bottom_half_slice, :, :]
         return bottom_half
@@ -119,12 +119,18 @@ class ImageProcessor(object):
         return img
 
     @staticmethod
-    def wall_detection (sr, sg, sb):
+    def wall_detection (img):
+        r, g, b      = cv2.split(img)
+
+        image_height = img.shape[0]
+        image_sample = slice(int(image_height * 0.2), int(image_height))
+        sr, sg, sb   = r[image_sample, :], g[image_sample, :], b[image_sample, :]
+
         black_count = 0
         yellow_count = 0
-        for i in range(len(sr) / 10):
-            for j in range(len(sr[i]) / 10):
-                inverse_i = len(sr)/8 + i
+        for i in range(len(sr) // 10):
+            for j in range(len(sr[i]) // 10):
+                inverse_i = len(sr) // 8 + i
                 inverse_j = len(sr[i]) - 1 - j
 
                 if sr[i][j] == 0 and sg[i][j] == 0 and sb[i][j] == 0:
@@ -139,16 +145,18 @@ class ImageProcessor(object):
             is_left_wall = True
         elif yellow_count>=40:
             if yellow_count>=40:
-                is_right_wall=True
-        return is_left_wall, is_right_wall
+                is_right_wall = True
+
+        return (is_left_wall or is_right_wall)
 
     @staticmethod
     def find_steering_angle_by_color(img):
         r, g, b      = cv2.split(img)
+
         image_height = img.shape[0]
         image_width  = img.shape[1]
         camera_x     = image_width / 2
-        image_sample = slice(0, int(image_height * 0.2))
+        image_sample = slice(int(image_height * 0.2), int(image_height))
         sr, sg, sb   = r[image_sample, :], g[image_sample, :], b[image_sample, :]
         track_list   = [sr, sg, sb]
         tracks       = map(lambda x: len(x[x > 20]), [sr, sg, sb])

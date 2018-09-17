@@ -21,7 +21,7 @@ import tempfile
 
 IS_DEBUG=False
 TESTING=False
-
+'''
 class Log(object):
     def __init__(self,is_debug=True):
         self.is_debug=is_debug
@@ -39,7 +39,7 @@ class Log(object):
         self.logger.info(msg)
 
 system_log=Log(IS_DEBUG)
-
+'''
 class FileModifierError(Exception):
     pass
 
@@ -586,7 +586,7 @@ class ImageProcessor(object):
 
             if (thetaA0 is None or abs(thetaA - thetaA0) <= tolerance) and \
                (thetaB0 is None or abs(thetaB - thetaB0) <= tolerance):
-                
+
                 if matched is None:
                     matched = vectors[i]
                     matched_distance, matched_length, matched_thetaA, matched_thetaB, matched_coord = matched
@@ -1025,4 +1025,3 @@ if __name__ == "__main__":
     eventlet.wsgi.server(eventlet.listen(('', 4567)), app)
 
 # vim: set sw=4 ts=4 et :
-

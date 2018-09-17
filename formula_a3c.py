@@ -7,6 +7,7 @@ import scipy.signal
 from PIL  import Image
 from io   import BytesIO
 import base64
+import math
 
 from coach import Coach
 
@@ -100,6 +101,19 @@ class Worker():
 
         return v_l / len(rollout),p_l / len(rollout),e_l / len(rollout), g_n,v_n
 
+    def reward(self, is_crash ,speed, throttle, brakes):
+        # crash
+        if is_crash:
+            return -1
+
+        x = (float(speed) / 2.0 * 100.0) + 0.99
+        base = 10
+        log_speed =  max(0.0, math.log(x, base) / 2.0)
+        if log_speed <= 0.0:
+            return -0.04
+        else:
+            return log_speed
+
     def work(self,max_episode_length,gamma,sess,coord,saver):
         episode_count = sess.run(self.global_episodes)
         total_steps = 0
@@ -121,6 +135,7 @@ class Worker():
                 speed = float(payload["speed"])
                 brakes = float(payload["brakes"])
                 cv2_img = ImageProcessor.preprocess(payload["image"])
+
                 s = process_frame(cv2_img)
 
                 rnn_state = self.local_AC.state_init
@@ -136,9 +151,11 @@ class Worker():
                         self.local_AC.state_in[1]:rnn_state[1]})
 
                     aa = np.random.choice(a_dist[0],p=a_dist[0])
+                    print("nn choice aa = %s" % aa)
                     aa = np.argmax(a_dist == aa)
+                    print("np.argmax(a_dist == aa) = %d" % aa)
                     action = Action(aa)
-
+                    print("nn choice action:%s" % action.name)
                     #if episode_count % 20 != 0:
                     action = self.coach.alter_action(cv2_img, speed, steering_angle, throttle, brakes)
 
@@ -154,11 +171,13 @@ class Worker():
                     throttle = float(payload["throttle"])
                     speed = float(payload["speed"])
                     brakes = float(payload["brakes"])
+                    is_crash = ImageProcessor.wall_detection(cv2_img)
 
-                    r = self.car.reward(speed, throttle, brakes)
+                    r = self.reward(is_crash, speed, throttle, brakes)
                     #print("reward = %s" % r)
-
                     d = self.car.is_episode_finished()
+                    if is_crash:
+                        d = True
 
                     if d == False:
                         s_ = process_frame(cv2_img)

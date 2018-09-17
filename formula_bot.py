@@ -39,7 +39,8 @@ class FormulaGame(object):
         @sio.on('telemetry')
         def telemetry(sid, dashboard):
             if dashboard:
-                if dashboard['status'] != '0' or int(dashboard['lap']) > 5:
+                if dashboard['status'] != '0' or int(dashboard['lap']) > 5 or float(dashboard["time"]) > 180:
+                    print("lap = %d, spend %.2f sec" % (int(dashboard['lap']) -1, float(dashboard["time"])))
                     self.is_finished = True
 
                 self.queue.put(dashboard)
@@ -59,21 +60,6 @@ class FormulaGame(object):
         def connect(sid, environ):
             self.send_control(0, 0)
             print("on connect")
-
-    def reward(self, speed, throttle, brakes):
-        # crash
-        if speed > 0 and throttle > 0:
-            return -1.0
-
-        x = (float(speed) / float((self.MAX_SPEED)) * 100.0) + 0.99
-        base = 10
-        log_speed =  max(0.0, math.log(x, base) / 2.0)
-        if log_speed <= 0.0:
-            return -0.04
-        elif brakes > 0.0:
-            return 0.0
-        else:
-            return log_speed
 
     def max_delta_angle_by_speed(self, speed):
         max_delta_angle = 90 * math.exp(-1.5*speed)
@@ -96,35 +82,11 @@ class FormulaGame(object):
                 return -max_delta_angle, 1
             return 0.0, 1
         elif action == 2:
-            #Brake
-            if speed > 0.5:
-                return throttle_angle, -1
-            else:
-                return throttle_angle, 0.0
-        elif action == 3:
             #TurnLeft
-            return -max_delta_angle, 0.2
-        elif action == 4:
+            return -max_delta_angle, 0.05
+        elif action == 3:
             #TurnRight
-            return max_delta_angle, 0.2
-        elif action == 5:
-            #AccelerateAndTurnLeft
-            return -max_delta_angle, 1
-        elif action == 6:
-            #AccelerateAndTurnRight
-            return max_delta_angle, 1
-        elif action == 7:
-            #BrakeAndTurnLeft
-            if speed > 1:
-                return -max_delta_angle, -1
-            else:
-                return -max_delta_angle, 0
-        elif action == 8:
-            #BrakeAndTurnRight
-            if speed > 1:
-                return max_delta_angle, -1
-            else:
-                return max_delta_angle, 0
+            return max_delta_angle, 0.05
         else:
             #NoAction
             #return steering_angle, throttle
@@ -166,7 +128,7 @@ class FormulaGame(object):
 
 
 gamma = .99 # discount rate for advantage estimation and reward discounting
-load_model = False
+load_model = True
 model_path = './model'
 s_size = 80 * 80 * 3 # Observations are greyscale frames of 84 * 84 * (1:gray, 3:RGB)
 a_size = len(Action) # Action(enum)
