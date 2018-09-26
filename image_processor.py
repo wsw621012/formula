@@ -110,7 +110,13 @@ class ImageProcessor(object):
         return img
 
     @staticmethod
-    def wall_detection (sr, sg, sb):
+    def wall_detection (img):
+        r, g, b      = cv2.split(img)
+
+        image_height = img.shape[0]
+        image_sample = slice(int(image_height * 0.2), int(image_height))
+        sr, sg, sb   = r[image_sample, :], g[image_sample, :], b[image_sample, :]
+
         black_count = 0
         yellow_count = 0
         for i in range(len(sr) // 10):
