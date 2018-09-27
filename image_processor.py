@@ -110,13 +110,7 @@ class ImageProcessor(object):
         return img
 
     @staticmethod
-    def wall_detection (img):
-        r, g, b      = cv2.split(img)
-
-        image_height = img.shape[0]
-        image_sample = slice(int(image_height * 0.2), int(image_height))
-        sr, sg, sb   = r[image_sample, :], g[image_sample, :], b[image_sample, :]
-
+    def wall_detection (sr, sg, sb):
         black_count = 0
         yellow_count = 0
         for i in range(len(sr) // 10):
@@ -265,9 +259,9 @@ class ImageProcessor(object):
         return steering_radian
 
     @staticmethod
-    def find_color_and_proportion(img):
-        crop_img = img[200:240, 0:320] # become 40 * 320
-        r, g, b = cv2.split(crop_img)
+    def find_color_percentage(img):
+        crop_img = img[160:240, 0:320] # become 80 * 320
+        b, g, r = cv2.split(crop_img)
         r_filter = (r == np.maximum(np.maximum(r, g), b)) & (r >= 120) & (g < 150) & (b < 150)
         g_filter = (g == np.maximum(np.maximum(r, g), b)) & (g >= 120) & (r < 150) & (b < 150)
         b_filter = (b == np.maximum(np.maximum(r, g), b)) & (b >= 120) & (r < 150) & (g < 150)
@@ -276,25 +270,25 @@ class ImageProcessor(object):
         r[y_filter], g[y_filter], b[np.invert(y_filter)]  = 255, 255, 0
 
         color = 0
-        total = 40 * 320
+        total = 80 * 320
         zeros = np.zeros(crop_img.shape[:2], dtype = "uint8")
 
         b[b_filter], b[np.invert(b_filter)] = 255, 0
-        if b[39, 159] == 255:
+        if b[79, 159] == 255:
             for blue in np.nditer(b):
                 if blue == 255:
                     color += 1
             return "blue", int(100 * color // total), cv2.merge([b, zeros, zeros])
 
         r[r_filter], r[np.invert(r_filter)] = 255, 0
-        if r[39, 159] == 255:
+        if r[79, 159] == 255:
             for red in np.nditer(r):
                 if red == 255:
                     color += 1
             return "red", int(100 * color // total), cv2.merge([zeros, zeros, r])
 
         g[g_filter], g[np.invert(g_filter)] = 255, 0
-        if g[39, 159] == 255:
+        if g[79, 159] == 255:
             for green in np.nditer(g):
                 if green == 255:
                     color += 1

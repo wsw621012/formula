@@ -102,24 +102,24 @@ class Worker():
     def processState(self, state):
         image = ImageProcessor.preprocess(state['image'])
         del state['image']
-        color, percent, jpg = ImageProcessor.find_color_and_proportion(image)
-        #if jpg is not None:
+        color, percent, jpg = ImageProcessor.find_color_percentage(image)
+        #if color == 'blue':
         #    ImageProcessor.save_image("frames", jpg, suffix=str(percent))
         state['color'] = color
         state['percent'] = str(percent)
+        image = image[100:240, 0:320]
         return np.reshape(scipy.misc.imresize(image, [84,84]), [21168]) / 255.0
 
     def reward(self, state, state_):
-        if state['color'] != state_['color']:
+        if state_['color'] == 'blue' or state_['color'] == 'black':
             return -1.0
 
         x = (100 * float(state_['speed']) / 2) + 0.99
-        speed_reward = max(0.0, math.log(x, 10) / 2.0)
+        speed_reward = max(0.0, math.log(x, 10) / 2.0) * math.cos(float(state_['steering_angle']) * np.pi / 180)
 
-        if int(state_['percent']) >= int(state['percent']):
-            return speed_reward
-        else:
-            return -speed_reward
+        if state['color'] == state_['color']:
+            return 2 * speed_reward
+        return speed_reward
 
     def train(self):
         tf.reset_default_graph()
@@ -167,12 +167,11 @@ class Worker():
                         a = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:[s]})[0]
                     state_, d = self.env.step(state, a)
                     s1 = self.processState(state_)
-                    if state_['color'] == 'black':
-                        d = True
-
                     r = self.reward(state, state_)
                     if r > 0:
                         print("positive - action: %s, reward: %.2f" % (Action(a).name, r))
+                    elif r <= -1.0:
+                        d = True # if from blue to non-blue, got -1.0 and exit episode
 
                     total_steps += 1
                     episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.

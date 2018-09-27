@@ -37,11 +37,10 @@ def draw_line(inputImage):
     cv2.imshow('edge', edges)
 
 
-img = cv2.imread("./Log/IMG/eagle_2018_09_26_09_59_54_050.jpg")
-cv2.imshow("original", img)
-crop_img = img[200:240, 0:320]
+img = cv2.imread("./Log/IMG/eagle_2018_09_27_17_30_16_851.jpg")
+crop_img = img[100:240, 0:320]
 flatten_img = flatten_rgb(crop_img)
-#cv2.imshow("flattened", flatten_img)
+cv2.imshow("flattened", flatten_img)
 
 (B, G, R) = cv2.split(flatten_img)
 sky_filter = ((B == 255) & (G == 255) & (R == 255))
@@ -57,22 +56,19 @@ g_img = cv2.merge([zeros, G, zeros])
 b_img = cv2.merge([B, zeros, zeros])
 r_img = cv2.merge([zeros, zeros, R])
 
+canny = cv2.Canny(B, 50, 150, apertureSize = 3)
+cv2.imshow('Canny-blue', canny)
+
+lines = cv2.HoughLines(canny, 5, np.pi / 180, 150, None, 0, 0)
+    
+if lines is not None:
+    for i in range(0, len(lines)):
+        rho = lines[i][0][0]
+        theta = lines[i][0][1]
+        print("rho = %.2f, theta = %.2f" % (rho, theta * 180 / np.pi))
 #cv2.imshow("Sky", sky_img)
-blue = 0
-black = 0
-total = 0
-for b in np.nditer(B):
-    if b == 255:
-        blue += 1
-    elif b == 0:
-        black += 1
-    total += 1
-print("blue: %d, black: %d, total: %d" % (blue, black, total))
-
-
-#bfname = 'BLUE_%d_%.2f' % (len(bp), len(bp) / (40*320))
-cv2.imshow("Blue", b_img)
-cv2.imshow("Green", g_img)
-cv2.imshow("Red", r_img)
+#cv2.imshow("Blue", b_img)
+#cv2.imshow("Green", g_img)
+#cv2.imshow("Red", r_img)
 
 cv2.waitKey(0)
