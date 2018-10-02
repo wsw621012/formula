@@ -78,37 +78,127 @@ def find_road_angle(target):
 
     return l_angle, r_angle
 
+def escape_from_wall(color, b, g, r):
+    height = b.shape[0]
+    color_seq = []
+    x = 0
+    for y in range(height):
+        # black
+        if r[y, x] == 0 and g[y, x] == 0 and b[y, x] == 0:
+            if len(color_seq) == 0 or color_seq[-1] != 'black':
+                color_seq.append('black')
+            continue
+        if r[y, x] == 255 and g[y, x] == 255:
+            # yellow
+            if b[y, x] == 0:
+                if len(color_seq) == 0 or color_seq[-1] != 'yellow':
+                    color_seq.append('yellow')
+            else:
+                if len(color_seq) == 0 or color_seq[-1] != 'white':
+                    color_seq.append('white')
+            continue
+        # red
+        if r[y, x] == 255 and (len(color_seq) == 0 or color_seq[-1] != 'red'):
+            color_seq.append('red')
+        elif g[y, x] == 255 and (len(color_seq) == 0 or color_seq[-1] != 'green'):
+            color_seq.append('green')
+        elif b[y, x] == 255 and (len(color_seq) == 0 or color_seq[-1] != 'blue'):
+            color_seq.append('blue')
+
+    if color == 'blue' and len(color_seq) > 2:
+        if color_seq[-2] == 'red' and color_seq[-3] == 'black':
+            return 90
+        if color_seq[-2] == 'green' and color_seq[-3] == 'red':
+            return 90
+        if color_seq[-2] == 'red' and color_seq[-3] == 'green':
+            return -90
+        if color_seq[-2] == 'green' and color_seq[-3] == 'black':
+            return -90
+
+    if color == 'red' and len(color_seq) > 1:
+        if color_seq[-2] == 'black':
+            return 90
+        if color_seq[-2] == 'green':
+            return -90
+    if color == 'red' and len(color_seq) > 3:
+        if color_seq[-4] == 'black':
+            return 90
+        if color_seq[-4] == 'green':
+            return -90
+
+    if color == 'green' and len(color_seq) > 1:
+        if color_seq[-2] == 'black':
+            return -90
+        if color_seq[-2] == 'red':
+            return 90
+    if color == 'green' and len(color_seq) > 3:
+        if color_seq[-4] == 'black':
+            return -90
+        if color_seq[-4] == 'red':
+            return 90
+
+    return 180
+
+def centre_channel(b, g, r):
+    x, y = (b.shape[1] - 1 )// 2, b.shape[0] - 1
+
+    r_filter = (r == np.maximum(np.maximum(r, g), b)) & (r >= 120) & (g < 150) & (b < 150)
+    g_filter = (g == np.maximum(np.maximum(r, g), b)) & (g >= 120) & (r < 150) & (b < 150)
+    b_filter = (b == np.maximum(np.maximum(r, g), b)) & (b >= 120) & (r < 150) & (g < 150)
+    y_filter = ((r >= 128) & (g >= 128) & (b < 100))
+
+    r[y_filter], g[y_filter], b[np.invert(y_filter)]  = 255, 255, 0
+    b[b_filter], b[np.invert(b_filter)] = 255, 0
+    r[r_filter], r[np.invert(r_filter)] = 255, 0
+    g[g_filter], g[np.invert(g_filter)] = 255, 0
+
+    if r[y, x] == 0 and g[y, x] == 0 and b[y, x] == 0:
+        return 'black', None
+
+    if r[y, x] == 255 and g[y, x] == 255:
+        if b[y, x] == 0:
+            return 'yellow', None
+        else:
+            return 'white', None
+
+    if g[y, x] == 255:
+        return "green", g
+    elif r[y, x] == 255:
+        return "red", r
+    else: #g[79, 159] == 255:
+        return "blue", b
+
 #eagle_2018_09_28_16_22_14_445-> 1st: 140:240, p1 = 4, p2 = 80
 #eagle_2018_09_28_16_22_17_238
 #eagle_2018_09_28_16_55_37_684
 #eagle_2018_09_28_16_55_38_817
-img = cv2.imread("./Log/IMG/eagle_2018_10_02_09_14_32_089.jpg")
-crop_img = img[140:240, 0:320] #100*320
-flatten_img = flatten_rgb(crop_img)
-
-(B, G, R) = cv2.split(flatten_img)
-sky_filter = ((B == 255) & (G == 255) & (R == 255))
-B[sky_filter] = 0
-R[sky_filter] = 0
-G[sky_filter] = 0
-
-target = R
-
-l_angle, r_angle = find_road_angle(target)
-if l_angle is None:
-    print("left is none")
+img = cv2.imread("./Log/IMG/eagle_2018_10_02_22_20_42_903.jpg")
+crop_img = img[140:240, 0:320] # become 100 * 320
+b, g, r = cv2.split(crop_img)
+color, target = centre_channel(b, g, r)
+if target is None:
+    print("%s: 180" % color)
 else:
-    print("left = %.2f" % float(l_angle))
+    l_angle, r_angle = find_road_angle(target)
 
-if r_angle is None:
-    print("right is none")
-else:
-    print("right = %.2f" % float(r_angle))
+    if l_angle is None:
+        if r_angle is None or r_angle > 88. or r_angle < -88.: # parallel forward to wall
+            print("%s: %.2f" %(color, escape_from_wall(color, b, g, r)))
+        else:
+            print("%s: %.2f" %(color, r_angle))
+    elif r_angle is None:
+        if l_angle > 88. or l_angle < -88.: # parallel forward to wall
+            print("%s: %.2f" %(color, escape_from_wall(color, b, g, r)))
+        else:
+            print("%s: %.2f" %(color, l_angle))
+    else:
+        print("%s: %.2f" %(color, (r_angle + l_angle )/2))
+
 
 #cv2.line(flatten_img, (x1, y1), (x2, y2), (0,0,0), 2)
 
-cv2.imshow("flatten", flatten_img)
-cv2.waitKey(0)
+#cv2.imshow("flatten", flatten_img)
+#cv2.waitKey(0)
 #sky_img = cv2.merge((B == 255), (G == 255), (R == 255))
 '''
 for h in range(3):

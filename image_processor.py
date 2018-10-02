@@ -96,35 +96,8 @@ class ImageProcessor(object):
         return img
 
     @staticmethod
-    def wall_detection (sr, sg, sb):
-        black_count = 0
-        yellow_count = 0
-        for i in range(len(sr) // 10):
-            for j in range(len(sr[i]) // 10):
-                inverse_i = len(sr) // 8 + i
-                inverse_j = len(sr[i]) - 1 - j
-
-                if sr[i][j] == 0 and sg[i][j] == 0 and sb[i][j] == 0:
-                    black_count += 1
-                if sr[inverse_i][inverse_j] == 0 and sg[inverse_i][inverse_j] == 0 and sb[inverse_i][inverse_j] == 0:
-                    yellow_count += 1
-
-        is_left_wall=False
-        is_right_wall=False
-
-        if black_count>=320:
-            is_left_wall = True
-        elif yellow_count>=40:
-            if yellow_count>=40:
-                is_right_wall = True
-
-        return is_left_wall, is_right_wall
-
-    @staticmethod
-    def _centre_channel(original_img):
-        crop_img = original_img[140:240, 0:320] # become 100 * 320
-        x, y = 159, 99
-        b, g, r = cv2.split(crop_img)
+    def _centre_channel(b, g, r):
+        x, y = (b.shape[1] - 1 )// 2, b.shape[0] - 1
 
         r_filter = (r == np.maximum(np.maximum(r, g), b)) & (r >= 120) & (g < 150) & (b < 150)
         g_filter = (g == np.maximum(np.maximum(r, g), b)) & (g >= 120) & (r < 150) & (b < 150)
@@ -194,19 +167,85 @@ class ImageProcessor(object):
         return l_angle, r_angle
 
     @staticmethod
+    def _escape_from_wall(color, b, g, r):
+        height = b.shape[0]
+        color_seq = []
+        x = 0
+        for y in range(height):
+            # black
+            if r[y, x] == 0 and g[y, x] == 0 and b[y, x] == 0:
+                if len(color_seq) == 0 or color_seq[-1] != 'black':
+                    color_seq.append('black')
+                continue
+            if r[y, x] == 255 and g[y, x] == 255:
+                # yellow
+                if b[y, x] == 0:
+                    if len(color_seq) == 0 or color_seq[-1] != 'yellow':
+                        color_seq.append('yellow')
+                else:
+                    if len(color_seq) == 0 or color_seq[-1] != 'white':
+                        color_seq.append('white')
+                continue
+            # red
+            if r[y, x] == 255 and (len(color_seq) == 0 or color_seq[-1] != 'red'):
+                color_seq.append('red')
+            elif g[y, x] == 255 and (len(color_seq) == 0 or color_seq[-1] != 'green'):
+                color_seq.append('green')
+            elif b[y, x] == 255 and (len(color_seq) == 0 or color_seq[-1] != 'blue'):
+                color_seq.append('blue')
+
+        if color == 'blue' and len(color_seq) > 2:
+            if color_seq[-2] == 'red' and color_seq[-3] == 'black':
+                return 90
+            if color_seq[-2] == 'green' and color_seq[-3] == 'red':
+                return 90
+            if color_seq[-2] == 'red' and color_seq[-3] == 'green':
+                return -90
+            if color_seq[-2] == 'green' and color_seq[-3] == 'black':
+                return -90
+
+        if color == 'red' and len(color_seq) > 1:
+            if color_seq[-2] == 'black':
+                return 90
+            if color_seq[-2] == 'green':
+                return -90
+        if color == 'red' and len(color_seq) > 3:
+            if color_seq[-4] == 'black':
+                return 90
+            if color_seq[-4] == 'green':
+                return -90
+
+        if color == 'green' and len(color_seq) > 1:
+            if color_seq[-2] == 'black':
+                return -90
+            if color_seq[-2] == 'red':
+                return 90
+        if color == 'green' and len(color_seq) > 3:
+            if color_seq[-4] == 'black':
+                return -90
+            if color_seq[-4] == 'red':
+                return 90
+
+        return 180
+
+    @staticmethod
     def find_median_angle(img):
-        color, target = ImageProcessor._centre_channel(img)
+        crop_img = original_img[140:240, 0:320] # become 100 * 320
+        b, g, r = cv2.split(crop_img)
+        color, target = ImageProcessor._centre_channel(b, g, r)
         if target is None:
             return color, 180, None
         l_angle, r_angle = ImageProcessor._find_road_angle(target)
 
         if l_angle is None:
-            if r_angle is None: # parallel forward to wall
-                return color, 90, target
+            if r_angle is None or r_angle > 88. or r_angle < -88.: # parallel forward to wall
+                return color, ImageProcessor._escape_from_wall(color, b, g, r), target
             else:
                 return color, r_angle, target
 
         if r_angle is None:
+            if l_angle > 88. or l_angle < -88.: # parallel forward to wall
+                return color, ImageProcessor._escape_from_wall(color, b, g, r), target
             return color, l_angle, target
 
         return color, (r_angle + l_angle )/2, target
