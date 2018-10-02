@@ -102,24 +102,27 @@ class Worker():
     def processState(self, state):
         image = ImageProcessor.preprocess(state['image'])
         del state['image']
-        color, percent, jpg = ImageProcessor.find_color_percentage(image)
+        color, angle, jpg = ImageProcessor.find_median_angle(image)
         #if color == 'blue':
         #    ImageProcessor.save_image("frames", jpg, suffix=str(percent))
         state['color'] = color
-        state['percent'] = str(percent)
+        state['angle'] = str(angle)
         image = image[100:240, 0:320]
         return np.reshape(scipy.misc.imresize(image, [84,84]), [21168]) / 255.0
 
     def reward(self, state, state_):
-        if state_['color'] == 'blue' or state_['color'] == 'black':
-            return -1.0
+        old = float(state['angle'])
+        new = float(state_['angle'])
 
-        x = (100 * float(state_['speed']) / 2) + 0.99
-        speed_reward = max(0.0, math.log(x, 10) / 2.0) * math.cos(float(state_['steering_angle']) * np.pi / 180)
+        if new > 0 and new < old:
+            return 1.
+        if new < 0 and new > old:
+            return 1.
 
-        if state['color'] == state_['color']:
-            return 2 * speed_reward
-        return speed_reward
+        if abs(new) < 10.
+            return 1.
+        else:
+            return -1.
 
     def train(self):
         tf.reset_default_graph()

@@ -48,21 +48,6 @@ class ImageProcessor(object):
 
 
     @staticmethod
-    def rad2deg(radius):
-        return radius / np.pi * 180.0
-
-
-    @staticmethod
-    def deg2rad(degree):
-        return degree / 180.0 * np.pi
-
-
-    @staticmethod
-    def bgr2rgb(img):
-        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-
-    @staticmethod
     def _normalize_brightness(img):
         maximum = img.max()
         if maximum == 0:
@@ -94,6 +79,7 @@ class ImageProcessor(object):
     @staticmethod
     def preprocess(b64_raw_img):
         image = np.asarray(Image.open(BytesIO(base64.b64decode(b64_raw_img))))
+        # brg to rgb
         return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     @staticmethod
@@ -135,128 +121,95 @@ class ImageProcessor(object):
         return is_left_wall, is_right_wall
 
     @staticmethod
-    def find_radian_by_color(idx, img):
-        r, g, b      = cv2.split(img)
-        color_list = [r, g, b]
+    def _centre_channel(original_img):
+        crop_img = original_img[140:240, 0:320] # become 100 * 320
+        x, y = 159, 99
+        b, g, r = cv2.split(crop_img)
 
-        Ymax = img.shape[0] - 1
-        Xmax  = img.shape[1] - 1
-        camera_x     = Xmax // 2
+        r_filter = (r == np.maximum(np.maximum(r, g), b)) & (r >= 120) & (g < 150) & (b < 150)
+        g_filter = (g == np.maximum(np.maximum(r, g), b)) & (g >= 120) & (r < 150) & (b < 150)
+        b_filter = (b == np.maximum(np.maximum(r, g), b)) & (b >= 120) & (r < 150) & (g < 150)
+        y_filter = ((r >= 128) & (g >= 128) & (b < 100))
 
-        delta_x = Xmax // 20
-        image_sample = slice(int((Ymax + 1)*0.2), int(Ymax + 1))
-        sr, sg, sb   = r[image_sample, :], g[image_sample, :], b[image_sample, :]
+        r[y_filter], g[y_filter], b[np.invert(y_filter)]  = 255, 255, 0
+        b[b_filter], b[np.invert(b_filter)] = 255, 0
+        r[r_filter], r[np.invert(r_filter)] = 255, 0
+        g[g_filter], g[np.invert(g_filter)] = 255, 0
 
-        is_left_wall, is_right_wall = ImageProcessor.wall_detection(sr, sg, sb)
-        if is_left_wall:
-            print("hist wall")
-            return 2*np.pi
-        if is_right_wall:
-            print("hit wall")
-            return -2*np.pi
+        if r[y, x] == 0 and g[y, x] == 0 and b[y, x] == 0:
+            return 'black', None
 
-        for _target in color_list:
-            if _target[Ymax, camera_x] == 255:
-                break
-            print("cental-target is %d:" %_target[Ymax, camera_x])
+        if r[y, x] == 255 and g[y, x] == 255:
+            if b[y, x] == 0:
+                return 'yellow', None
+            else:
+                return 'white', None
 
-        _x = camera_x
-        _y = Ymax
-        while _y > 0:
-            _y -= 1
-            if (_x < delta_x) or (_x >= Xmax - delta_x):
-                break
+        if g[y, x] == 255:
+            return "green", g
+        elif r[y, x] == 255:
+            return "red", r
+        else: #g[79, 159] == 255:
+            return "blue", b
 
-            if _target[_y, _x] != 255:
-                if (_x >= delta_x) and _target[_y, _x - delta_x] == 255:
-                    _x -= delta_x
-                    continue
-                if (_x <= Xmax - delta_x) and _target[_y, _x + delta_x] == 255:
-                    _x += delta_x
-                    continue
+    @staticmethod
+    def _find_road_angle(target):
+        left_x, left_y = [], []
+        right_x, right_y = [], []
+        l_angle, r_angle = None, None
+        for _y in range(target.shape[0]):
+            y = target.shape[0] - 1 -_y
+            color_beg = False
+            for x in range(target.shape[1]):
+                if target[y, x] == 255 and color_beg == False:
+                    if len(left_x) == 0 or abs(x - left_x[-1]) < 5:
+                        color_beg = True
+                        if x > 0:
+                            left_y.append(y)
+                            left_x.append(x)
 
-                if _target[_y, Xmax] == 255:
-                    _x = Xmax
-                    break
+                if target[y, x] == 0 and color_beg == True:
+                    if len(right_x) == 0 or abs(x - right_x[-1]) < 5:
+                        if x < 320:
+                            right_y.append(y)
+                            right_x.append(x)
+                            break
 
-                if _target[_y, 0] == 255:
-                    _x = 0
-                    break
+        if len(left_x) > 3:
+            if max(left_x) - min(left_x) > 10:
+                m, _ = np.polyfit(left_x, left_y, 1)
+                l_angle = math.degrees(math.atan(-1./m))
+            else:
+                m, _ = np.polyfit(left_y, left_x, 1)
+                l_angle = math.degrees(math.atan(-m))
 
-                break
+        if len(right_x) > 3:
+            if max(right_x) - min(right_x) > 10:
+                m, _ = np.polyfit(right_x, right_y, 1)
+                r_angle = math.degrees(math.atan(-1./m))
+            else:
+                m, _ = np.polyfit(right_y, right_x, 1)
+                r_angle = math.degrees(math.atan(-m))
 
-        # bottom_left_x
-        # p1 +------+ p3
-        #    |      |
-        # p2+-------+ p4
-        x1 = x2 = 0
-        x3 = x4 = Xmax
-        y2 = y4 = Ymax
-        y1 = y3 = _y
-        for x2 in range(camera_x - 1, -1, -1):
-            if _target[Ymax, x2] != 255:
-                break
-        if x2 == 0:
-            for y2 in range(Ymax, -1, -1):
-                if _target[y2, 0] != 255:
-                    break
-        if y2 == 0:
-            y2 = Ymax
-        for x1 in range(_x - 1, -1, -1):
-            if _target[_y, x1] != 255:
-                break
-        for x4 in range(camera_x, Xmax+1, 1):
-            if _target[Ymax, x4] != 255:
-                break
-        if x4 == Xmax:
-            for y4 in range(Ymax, -1, -1):
-                if _target[y4, x4] != 255:
-                    break
-        if y4 == 0:
-            y4 = Ymax
-        for x3 in range(_x, Xmax+1, 1):
-            if _target[_y, x3] != 255:
-                break
+        return l_angle, r_angle
 
-        #'''debug mode
-        print("p1(%d, %d)~P2(%d,%d)" %(x1,y1,x2,y2))
-        print("p3(%d, %d)~P4(%d,%d)" %(x3,y3,x4,y4))
+    @staticmethod
+    def find_median_angle(img):
+        color, target = ImageProcessor._centre_channel(img)
+        if target is None:
+            return color, 180, None
+        l_angle, r_angle = ImageProcessor._find_road_angle(target)
 
-        if (x1 == 0) and (x2 == 0) and (x3 > x4):
-            steering_radian = math.atan2(y4 - y3, x3 - x4)
-            return np.pi/2 - steering_radian
-        elif (x3 == Xmax) and (x4 == Xmax) and (x2 > x1):
-            steering_radian = math.atan2(y2 - y1, x1 - x2)
-            return np.pi/2 - steering_radian
+        if l_angle is None:
+            if r_angle is None: # parallel forward to wall
+                return color, 90, target
+            else:
+                return color, r_angle, target
 
-        #if y1 == 0 and y3 == 0:
-        #    steering_radian = math.atan2(Ymax, ((x1 + x3) // 2) - camera_x)
-        #    return np.pi/2 - steering_radian
+        if r_angle is None:
+            return color, l_angle, target
 
-        deno = float((y4-y3)*(x2-x1) - (x4-x3)*(y2-y1))
-        if deno == 0: # parallel lines
-            return 0.0
-
-        Ua = ((x4-x3)*(y1-y3) - (y4-y3)*(x1-x3)) / deno
-
-        Cx = x1 + Ua*(x2-x1)
-        Cy = y1 + Ua*(y2-y1)
-
-        steering_radian = np.pi/2 - math.atan2(Ymax - Cy, Cx - camera_x)
-
-
-        print("C(%d, %d)" %(Cx,Cy))
-
-        new_img = img.copy();
-        cv2.line(new_img, (x2, y2), (x1, y1), (0, 0, 0))
-        cv2.line(new_img, (x4, y4), (x3, y3), (0, 0, 0))
-        cv2.line(new_img, (int(Cx), int(Cy)), (camera_x, Ymax), (255, 255, 255), 2)
-
-
-        filename = "./frames/%02d_%.4f.jpg" % (idx, steering_radian)
-        cv2.imwrite(filename, new_img)
-
-        return steering_radian
+        return color, (r_angle + l_angle )/2, target
 
     @staticmethod
     def find_color_percentage(img):

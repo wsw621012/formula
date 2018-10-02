@@ -69,29 +69,14 @@ class gameEnv(object):
         time = float(state['time'])
         last_time = float(state['last_time'])
 
-        if action == Action.Accelerate:
-            new_throttle = Controller.speed_up(throttle)
-            new_angle = Controller.forward(steering_angle, time, last_time)
-        elif action == Action.AccelerateAndTurnLeft:
-            new_throttle = Controller.speed_up(throttle)
-            new_angle = Controller.turn_left(steering_angle, time, last_time)
-        elif action == Action.AccelerateAndTurnRight:
-            new_throttle = Controller.speed_up(throttle)
-            new_angle = Controller.turn_right(steering_angle, time, last_time)
-        elif action == Action.BrakeAndTurnLeft:
-            new_throttle = Controller.speed_down(throttle)
-            new_angle = Controller.turn_left(steering_angle, time, last_time)
-        elif action == Action.BrakeAndTurnRight:
-            new_throttle = Controller.speed_down(throttle)
-            new_angle = Controller.turn_right(steering_angle, time, last_time)
-        elif action == Action.TurnLeft:
+        if action == Action.TurnLeft:
             new_angle = Controller.turn_left(steering_angle, time, last_time)
         elif action == Action.TurnRight:
             new_angle = Controller.turn_right(steering_angle, time, last_time)
-        else: # NoAction & Brake. Maybe add reversing action later
-            new_throttle = Controller.speed_down(throttle)
+        else: # forward
             new_angle = Controller.forward(steering_angle, time, last_time)
-        self._send_cmd(new_angle, new_throttle)
+
+        self._send_cmd(new_angle, 1.0) # dan said always keep highest spped
 
         msg = self.dashboard.get()
         return msg, self.is_finished

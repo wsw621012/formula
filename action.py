@@ -1,12 +1,6 @@
 from enum import IntEnum
 
 class Action(IntEnum):
-    NoAction, \
-    Accelerate, \
-    Brake, \
+    Forward, \
     TurnLeft, \
-    TurnRight, \
-    AccelerateAndTurnLeft, \
-    AccelerateAndTurnRight, \
-    BrakeAndTurnLeft, \
-    BrakeAndTurnRight = range(9)
+    TurnRight = range(3)
