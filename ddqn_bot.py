@@ -9,7 +9,7 @@ import scipy.misc
 import os
 import threading
 
-from action import Action
+from action import Action, Reverse
 from game_env import gameEnv
 from image_processor import ImageProcessor
 #env = gameEnv(partial=False,size=5)
@@ -98,31 +98,67 @@ class Worker():
         self.env = env
         self.stop = False
         self.frame_count = 0
+        self.coach_actions = []
+        self.last_target = None
 
     def processState(self, state):
         image = ImageProcessor.preprocess(state['image'])
         del state['image']
-        color, angle, jpg = ImageProcessor.find_median_angle(image)
-        #if color == 'blue':
-        #    ImageProcessor.save_image("frames", jpg, suffix=str(percent))
+        color, angle, target = ImageProcessor.find_median_angle(image)
         state['color'] = color
         state['angle'] = str(angle)
+        if self.last_target is None:
+            state['mse'] = 0.
+        else:
+            state['mse'] = self.mse(target, self.last_target)
+            print("mse err: %.2f" % float(state['mse']))
+            last_target = target
         image = image[100:240, 0:320]
         return np.reshape(scipy.misc.imresize(image, [84,84]), [21168]) / 255.0
 
-    def reward(self, state, state_):
-        old = float(state['angle'])
-        new = float(state_['angle'])
+    #compare 2 image
+    def mse(self, imageA, imageB):
+	    err = np.sum((imageA.astype("float") - imageB.astype("float")) ** 2)
+	    err /= float(imageA.shape[0] * imageA.shape[1])
+	    return err
 
-        if new > 0 and new < old:
-            return 1.
-        if new < 0 and new > old:
-            return 1.
+    def reward_and_coach(self, state, state_):
+        previous_angle = float(state['angle'])
+        current_angle = float(state_['angle'])
 
-        if abs(new) < 10.
-            return 1.
-        else:
+        if current_angle == 180:
+            if len(self.coach_actions) == 0:
+                self.coach_actions.append(Reverse.Forward)
+            return -1
+
+        if current_angle >= 90:
+            if len(self.coach_actions) == 0:
+                if state_['color'] == 'blue':
+                    self.coach_actions.append(Action.TurnRight)
+                    #self.coach_actions.append(Action.TurnRight)
+                else:
+                    self.coach_actions.append(Reverse.TurnLeft)
+                    #self.coach_actions.append(Reverse.TurnLeft)
+            return -1
+
+        if current_angle <= -90:
+            print("mse err: %.2f -> %.2f" % (float(state['mse']), float(state_['mse'])))
+            if len(self.coach_actions) == 0:
+                if state_['color'] == 'blue':
+                    self.coach_actions.append(Action.TurnLeft)
+                    #self.coach_actions.append(Action.TurnLeft)
+                else:
+                    self.coach_actions.append(Reverse.TurnRight)
+                    #self.coach_actions.append(Reverse.TurnRight)
+            return -1
+
+        if current_angle > 0 and current_angle > previous_angle:
             return -1.
+        if current_angle < 0 and current_angle < previous_angle:
+            return -1.
+
+        return 1
+
 
     def train(self):
         tf.reset_default_graph()
@@ -130,7 +166,7 @@ class Worker():
         targetQN = Qnetwork(h_size, env)
 
         init = tf.global_variables_initializer()
-        saver = tf.train.Saver()
+        saver = tf.train.Saver(max_to_keep=10)
         trainables = tf.trainable_variables()
 
         targetOps = updateTargetGraph(trainables,tau)
@@ -156,28 +192,28 @@ class Worker():
                 ckpt = tf.train.get_checkpoint_state(path)
                 saver.restore(sess,ckpt.model_checkpoint_path)
             for i in range(num_episodes):
+                self.coach_actions = []
                 episodeBuffer = experience_buffer()
-                #Reset environment and get first new observation
-                #env.reset()
                 state = self.env.get_state()
                 s = self.processState(state)
                 d = False
                 rAll = 0
                 while env.is_finished == False:    #Choose an action by greedily (with e chance of random action) from the Q-network
-                    if np.random.rand(1) < e or total_steps < pre_train_steps:
+                    if len(self.coach_actions) > 0:
+                        a = self.coach_actions.pop(0)
+                    elif np.random.rand(1) < e or total_steps < pre_train_steps:
                         a = np.random.randint(0,4)
                     else:
                         a = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:[s]})[0]
+
                     state_, d = self.env.step(state, a)
                     s1 = self.processState(state_)
-                    r = self.reward(state, state_)
-                    if r > 0:
-                        print("positive - action: %s, reward: %.2f" % (Action(a).name, r))
-                    elif r <= -1.0:
-                        d = True # if from blue to non-blue, got -1.0 and exit episode
+                    r = self.reward_and_coach(state, state_)
 
-                    total_steps += 1
-                    episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
+                    if a > 0: #only learn go forward action
+                        print("angle: from %.2f -> %.2f - action: %s, reward: %.2f" % (float(state['angle']), float(state_['angle']), Action(a).name, r))
+                        total_steps += 1
+                        episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
 
                     if total_steps > pre_train_steps:
                         if e > endE:

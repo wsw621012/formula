@@ -97,8 +97,6 @@ class ImageProcessor(object):
 
     @staticmethod
     def _centre_channel(b, g, r):
-        x, y = (b.shape[1] - 1 )// 2, b.shape[0] - 1
-
         r_filter = (r == np.maximum(np.maximum(r, g), b)) & (r >= 120) & (g < 150) & (b < 150)
         g_filter = (g == np.maximum(np.maximum(r, g), b)) & (g >= 120) & (r < 150) & (b < 150)
         b_filter = (b == np.maximum(np.maximum(r, g), b)) & (b >= 120) & (r < 150) & (g < 150)
@@ -109,6 +107,8 @@ class ImageProcessor(object):
         r[r_filter], r[np.invert(r_filter)] = 255, 0
         g[g_filter], g[np.invert(g_filter)] = 255, 0
 
+        #partial yellow wall or partial black wall
+        x, y = (b.shape[1] - 1 )// 2, b.shape[0] - 1
         if r[y, x] == 0 and g[y, x] == 0 and b[y, x] == 0:
             return 'black', None
 
@@ -117,6 +117,34 @@ class ImageProcessor(object):
                 return 'yellow', None
             else:
                 return 'white', None
+
+        yellow, black = (-1,-1),(-1,-1)
+        for _x in range(b.shape[1]):
+            if b[y, _x] == 0:
+                if r[y, _x] == 0 and g[y, _x] == 0: #black
+                    start, end = black
+                    if start == -1:
+                        black = (_x, end)
+                    continue
+                if r[y, _x] == 255 and g[y, _x] == 255: #yellow
+                    start, end = yellow
+                    if start == -1:
+                        yellow = (_x, end)
+                    continue
+
+            start, end = black
+            if start != -1 and end == -1:
+                black = (start, _x)
+            start, end = yellow
+            if start != -1 and end == -1:
+                yellow = (start, _x)
+
+        start, end = black
+        if start != -1 and end != -1:
+            return 'black', None
+        start, end = yellow
+        if start != -1 and end != -1:
+            return 'yellow', None
 
         if g[y, x] == 255:
             return "green", g
@@ -199,7 +227,11 @@ class ImageProcessor(object):
                 return 90
             if color_seq[-2] == 'green' and color_seq[-3] == 'red':
                 return 90
+            if color_seq[-2] == 'green' and color_seq[-3] == 'yellow':
+                return 90
             if color_seq[-2] == 'red' and color_seq[-3] == 'green':
+                return -90
+            if color_seq[-2] == 'red' and color_seq[-3] == 'yellow':
                 return -90
             if color_seq[-2] == 'green' and color_seq[-3] == 'black':
                 return -90
@@ -208,6 +240,8 @@ class ImageProcessor(object):
             if color_seq[-2] == 'black':
                 return 90
             if color_seq[-2] == 'green':
+                return -90
+            if color_seq[-2] == 'yellow':
                 return -90
         if color == 'red' and len(color_seq) > 3:
             if color_seq[-4] == 'black':
@@ -220,6 +254,8 @@ class ImageProcessor(object):
                 return -90
             if color_seq[-2] == 'red':
                 return 90
+            if color_seq[-2] == 'yellow':
+                return 90
         if color == 'green' and len(color_seq) > 3:
             if color_seq[-4] == 'black':
                 return -90
@@ -230,7 +266,7 @@ class ImageProcessor(object):
 
     @staticmethod
     def find_median_angle(img):
-        crop_img = original_img[140:240, 0:320] # become 100 * 320
+        crop_img = img[140:240, 0:320] # become 100 * 320
         b, g, r = cv2.split(crop_img)
         color, target = ImageProcessor._centre_channel(b, g, r)
         if target is None:
