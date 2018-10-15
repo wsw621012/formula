@@ -3,7 +3,7 @@ from multiprocessing import Queue
 
 
 class gameEnv(object):
-    MAX_STEERING_ANGLE = 40
+    MAX_STEERING_ANGLE = 45
 
     def __init__(self, sio):
         self.actions = len(Action)
@@ -11,7 +11,8 @@ class gameEnv(object):
         self.command = Queue()
         self.sio = sio
         self.is_finished = False
-        self.last_time = 0.0
+        #self.steering_angle_list = [2.86, 10.36, 37.24, 45.0]
+        self.steering_angle_list = [10, 20, 30, 40, 45]
 
         @sio.on('telemetry')
         def telemetry(sid, msg):
@@ -26,8 +27,6 @@ class gameEnv(object):
             self._send_control(0, 0)
 
     def _process_msg(self, msg):
-        msg['last_time'] = self.last_time
-        self.last_time = msg['time']
         if msg['status'] != '0' or int(msg['lap']) > 1 or float(msg['time']) > 300:
             print("lap = %d, spend %.2f sec" % (int(msg['lap']) -1, float(msg['time'])))
             self.is_finished = True
@@ -62,24 +61,28 @@ class gameEnv(object):
     def get_state(self):
         return self.dashboard.get()
 
-    #s1,r,d = env.step(a)
     def step(self, state, action):
-        new_angle = steering_angle = float(state['steering_angle'])
-
-        if action == Action.TurnRight or action == Reverse.TurnRight:
-            new_angle = min(gameEnv.MAX_STEERING_ANGLE, steering_angle + 10)
-        elif action == Action.TurnLeft or action == Reverse.TurnLeft:
-            new_angle = max(-gameEnv.MAX_STEERING_ANGLE, steering_angle - 10)
-        else: # Action.Forward or Reverse.Forward:
-            if steering_angle > 0:
-                new_angle = max(0, steering_angle - 10)
-            else:
-                new_angle = min(0, steering_angle + 10)
+        steering_angle = float(state['steering_angle'])
+        new_angle = 0 # forward
+        if action == Action.TurnRight:
+            for i in range(len(self.steering_angle_list)):
+                if steering_angle < self.steering_angle_list[i]:
+                    new_angle = self.steering_angle_list[i]
+                    break
+        elif action == Reverse.TurnRight:
+            new_angle = 45.
+        elif action == Action.TurnLeft:
+            for i in range(len(self.steering_angle_list)):
+                if steering_angle > -self.steering_angle_list[i]:
+                    new_angle = -self.steering_angle_list[i]
+                    break
+        elif action == Reverse.TurnLeft:
+            new_angle = -45.
 
         if action >= 0:
-            self._send_cmd(new_angle, 1.) # dan said always keep highest spped
+            self._send_cmd(new_angle, 1.0) # dan said always keep highest spped
         else:
-            self._send_cmd(new_angle, -1.)
+            self._send_cmd(new_angle, -0.2)
 
         msg = self.dashboard.get()
         return msg, self.is_finished

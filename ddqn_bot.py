@@ -99,20 +99,64 @@ class Worker():
         self.stop = False
         self.frame_count = 0
         self.coach_actions = []
-        self.last_target = None
+        self.last_wall_angle = None
+        self.direction = None
+        #self.last_target = None
+
+    def _calc_steering_angle(self, im_gray):
+        target = ImageProcessor._crop_gray(im_gray, 0.6, 1.0)
+        #b, r, w = ImageProcessor._color_rate(target)
+
+        wall_angle, lx, ly, rx, ry = ImageProcessor.find_wall_angle(target)
+
+        if wall_angle == 180:
+            return 180
+
+        if wall_angle is not None: # wall is appeared
+            # degrees:74 is atan(320 / 95)
+            self.last_wall_angle = wall_angle
+            if lx == 0 and rx == target.shape[1] - 1:
+                if (ly + ry) // 2 > 40: # this is the minimaize radius to turn
+                    return wall_angle
+                if wall_angle > 0:
+                    return wall_angle - 180
+                else:
+                    return wall_angle + 180
+            if lx > (target.shape[1] - rx): # obstacle
+                # degrees:60 is atan(160 / 95)
+                return -60
+            else:
+                return 60
 
     def processState(self, state):
         image = ImageProcessor.preprocess(state['image'])
         del state['image']
-        color, angle, target = ImageProcessor.find_median_angle(image)
-        state['color'] = color
-        state['angle'] = str(angle)
-        if self.last_target is None:
-            state['mse'] = 0.
+
+        im_gray = ImageProcessor._flatten_rgb_to_gray(image)
+        angle = self._calc_steering_angle(im_gray)
+
+        dir = ImageProcessor.find_arrow_dir(im_gray)
+        if dir is not None:
+            if dir == 'B':
+                if angle == 180:
+                    self.direction = 'left'
+                else:
+                    self.direction = 'reverse'
+            elif dir == 'F':
+                if angle == 180:
+                    self.direction = 'right'
+                else:
+                    self.direction = 'forward'
+        # no wall
+        if w == 1: # parallel
+
+            angle = ImageProcessor.find_red_angle(im_gray)
+        elif self.last_wall_angle is not None:
+            angle = self.last_wall_angle
         else:
-            state['mse'] = self.mse(target, self.last_target)
-            print("mse err: %.2f" % float(state['mse']))
-            last_target = target
+            angle = 180
+
+        state['angle'] = str(angle)
         image = image[100:240, 0:320]
         return np.reshape(scipy.misc.imresize(image, [84,84]), [21168]) / 255.0
 
@@ -125,39 +169,59 @@ class Worker():
     def reward_and_coach(self, state, state_):
         previous_angle = float(state['angle'])
         current_angle = float(state_['angle'])
-
+        steering_angle = float(state_['steering_angle'])
+        #print("mse err: %.2f -> %.2f" % (float(state['mse']), float(state_['mse'])))
         if current_angle == 180:
             if len(self.coach_actions) == 0:
-                self.coach_actions.append(Reverse.Forward)
-            return -1
-
-        if current_angle >= 90:
-            if len(self.coach_actions) == 0:
-                if state_['color'] == 'blue':
-                    self.coach_actions.append(Action.TurnRight)
-                    #self.coach_actions.append(Action.TurnRight)
-                else:
+                if (self.direction is not None and self.direction == 'right') or (self.last_wall_angle is not None and self.last_wall_angle > 0): # left wall
                     self.coach_actions.append(Reverse.TurnLeft)
-                    #self.coach_actions.append(Reverse.TurnLeft)
-            return -1
+                    self.coach_actions.append(Reverse.TurnLeft)
+                    self.direction = None
+                elif (self.direction is not None and self.direction == 'left') or (self.last_wall_angle is not None and self.last_wall_angle > 0): # right wall:
+                    self.coach_actions.append(Reverse.TurnRight)
+                    self.coach_actions.append(Reverse.TurnRight)
+                    self.direction = None
+                else:
+                    self.coach_actions.append(Reverse.Backward)
+                    self.coach_actions.append(Reverse.Backward)
+                return -1
+            else:
+                return 1
 
-        if current_angle <= -90:
-            print("mse err: %.2f -> %.2f" % (float(state['mse']), float(state_['mse'])))
+        if self.direction is not None and self.direction == 'reverse':
+            print("wrong direction!!!")
             if len(self.coach_actions) == 0:
-                if state_['color'] == 'blue':
-                    self.coach_actions.append(Action.TurnLeft)
-                    #self.coach_actions.append(Action.TurnLeft)
+                if self.last_wall_angle > 0:
+                    self.coach_actions.append(Reverse.TurnLeft)
+                    self.coach_actions.append(Reverse.TurnLeft)
                 else:
                     self.coach_actions.append(Reverse.TurnRight)
-                    #self.coach_actions.append(Reverse.TurnRight)
-            return -1
+                    self.coach_actions.append(Reverse.TurnRight)
+                self.direction = None
+                return -1
+            else:
+                return 1
 
-        if current_angle > 0 and current_angle > previous_angle:
-            return -1.
-        if current_angle < 0 and current_angle < previous_angle:
-            return -1.
+        #if self.direction is not None and self.direction != 'forward':
+        #    print("direction is %s" % self.direction)
+        #    if previous_angle > current_angle:
+        #        self.direction = None
 
-        return 1
+        if current_angle > 0 and current_angle < previous_angle:
+            return 1.
+
+        if current_angle < 0 and current_angle > previous_angle:
+            return 1.
+
+        if abs(current_angle) < 10:
+            return 1.
+
+        if current_angle > 45 and steering_angle >= 45:
+            return 1.
+        if current_angle < -45 and steering_angle <= -45:
+            return 1.
+
+        return -1
 
 
     def train(self):
@@ -211,7 +275,7 @@ class Worker():
                     r = self.reward_and_coach(state, state_)
 
                     if a > 0: #only learn go forward action
-                        print("angle: from %.2f -> %.2f - action: %s, reward: %.2f" % (float(state['angle']), float(state_['angle']), Action(a).name, r))
+                        print("angle %.2f -> %.2f - action: %s, reward: %.2f" % (float(state['angle']), float(state_['angle']), Action(a).name, r))
                         total_steps += 1
                         episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
 

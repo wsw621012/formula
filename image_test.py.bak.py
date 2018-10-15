@@ -99,36 +99,45 @@ image = cv2.imread(file)
 
 im_gray = ImageProcessor._flatten_rgb_to_gray(image)
 
-target = ImageProcessor._crop_gray(im_gray, 0.6, 1.0)
-b, r, w = ImageProcessor._color_rate(target)
+foot = ImageProcessor._crop_gray(im_gray, 0.8, 1.0)
+cv2.imshow("foot", foot)
+
+b, r, w = ImageProcessor._color_rate(foot)
 print("b:%.0f, r:%.0f, w:%.0f" %(100*b, 100*r, 100*w))
 
-wall_angle, lx, ly, rx, ry = ImageProcessor.find_wall_angle(target, debug = True)
-
-if wall_angle == 180:
-    if r == 1:
-        print("wall_angle = 180, & red = 100%% in foot, angle = 90 or -90")
-    else:
-        print("wall_angle = 180, & red < 100%% in foot, angle = 180")
-elif wall_angle is None:
-    if r > 0:
-        angle = ImageProcessor.find_red_angle(im_gray, debug = True)
-        print("wall_angle is none & red > 0 => find_red_angle = %.2f" % angle)
-    else:
-        print("wall_angle is none & red == 0 => angle = 180")
+if b > 0 and r == 0:
+    print("black wall: angle = 180")
 else:
-    radius = target.shape[0]
-    x = target.shape[1] // 2 + int(radius * math.sin(math.radians(wall_angle)))
-    y = target.shape[0]    - int(radius * math.cos(math.radians(wall_angle)))
-    cv2.line(target, (160, target.shape[0] - 1), (x, y), 0, 2)
+    target = ImageProcessor._crop_gray(im_gray, 0.6, 1.0)
+    wall_angle = ImageProcessor.find_wall_angle(target)
 
-    if r > 0:
-        angle = ImageProcessor.find_red_angle(im_gray, debug = True)
-        print("wall_angle = %.2f & red > 0 => find_red_angle = %.2f" % (wall_angle, angle))
+    if wall_angle == 180:
+        if r == 1:
+            print("wall_angle = 180, & red = 100%% in foot, angle = 90 or -90")
+        else:
+            print("wall_angle = 180, & red < 100%% in foot, angle = 180")
+    elif wall_angle is None:
+        if r > 0:
+            angle = ImageProcessor.find_red_angle(im_gray, debug = True)
+            print("wall_angle is none & red > 0 => find_red_angle = %.2f" % angle)
+        else:
+            print("wall_angle is none & red == 0 => angle = 180")
     else:
-        print("wall_angle = %.2f, set it to last_wall_angle" % wall_angle)
+        if r > 0:
+            angle = ImageProcessor.find_red_angle(im_gray, debug = True)
+            #radius = target.shape[0]
+            #x = target.shape[1] // 2 + int(radius * math.sin(math.radians(angle)))
+            #y = target.shape[0]    - int(radius * math.cos(math.radians(angle)))
+            #cv2.line(target, (160, target.shape[0] - 1), (x, y), 0, 2)
+            print("wall_angle = %.2f & red > 0 => find_red_angle = %.2f" % (wall_angle, angle))
+        else:
+            radius = target.shape[0]
+            x = target.shape[1] // 2 + int(radius * math.sin(math.radians(wall_angle)))
+            y = target.shape[0]    - int(radius * math.cos(math.radians(wall_angle)))
+            cv2.line(target, (160, target.shape[0] - 1), (x, y), 0, 2)
+            print("wall_angle = %.2f, set it to last_wall_angle" % wall_angle)
 
-cv2.imshow("target", target)
+    cv2.imshow("target", target)
 
 dir = ImageProcessor.find_arrow_dir(im_gray, im_gray)
 cv2.imshow("gray", im_gray)

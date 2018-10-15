@@ -6,6 +6,6 @@ class Action(IntEnum):
     TurnRight = 3
 
 class Reverse(IntEnum):
-    Forward = -1
+    Backward = -1
     TurnLeft = -2
     TurnRight = -3
