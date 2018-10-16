@@ -14,23 +14,6 @@ def logit(msg):
 
 class ImageProcessor(object):
     @staticmethod
-    def most_rgb(im):
-
-        #im.thumbnail((84, 84))
-        total_color = 0
-        calc = {}
-
-        for count, (r, g, b) in im.getcolors(im.size[0] * im.size[1]):
-            rgb = r * 65536 + g * 256 + b
-            #if rgb < 16777215:
-            calc[rgb] = count
-            total_color += count
-        return calc, total_color
-        #most = max(calc.items(), key=operator.itemgetter(1))[0]
-        #print("most rgb = %d(%d) in %d" % (most, calc[most], total_color))
-        #return most, calc[most] / float(total_color)
-
-    @staticmethod
     def show_image(img, name = "image", scale = 1.0):
         if scale and scale != 1.0:
             img = cv2.resize(img, newsize, interpolation=cv2.INTER_CUBIC)
@@ -39,42 +22,50 @@ class ImageProcessor(object):
         cv2.imshow(name, img)
         cv2.waitKey(1)
 
-
     @staticmethod
     def save_image(folder, img, prefix = "img", suffix = ""):
         from datetime import datetime
         filename = "%s-%s-%s.jpg" % (prefix, datetime.now().strftime('%Y%m%d-%H%M%S-%f'), suffix)
         cv2.imwrite(os.path.join(folder, filename), img)
 
+    @staticmethod
+    def _color_rate(img_gray):
+        total_size = (img_gray.shape[0] * img_gray.shape[1])
+        total_rate = []
+        for color in [0, 76, 255]:
+            y, _ = np.where(img_gray == color)
+            color_rate = 0
+            if y is not None or len(y) > 0:
+                color_rate = len(y) / total_size
+            total_rate.append(color_rate)
+        return total_rate[0], total_rate[1], total_rate[2]
 
     @staticmethod
-    def _normalize_brightness(img):
-        maximum = img.max()
-        if maximum == 0:
-            return img
-        adjustment = min(255.0/img.max(), 3.0)
-        normalized = np.clip(img * adjustment, 0, 255)
-        normalized = np.array(normalized, dtype=np.uint8)
-        return normalized
-
+    def _crop_gray(img, beg, end):
+        crop_ratios = (beg, end)
+        crop_slice  = slice(*(int(x * img.shape[0]) for x in crop_ratios))
+        return img[crop_slice, :]
 
     @staticmethod
-    def flatten_rgb(img):
-        b, g, r = cv2.split(img)
+    def _flatten_rgb_to_gray(img):
+        r, g, b = cv2.split(img)
         r_filter = (r == np.maximum(np.maximum(r, g), b)) & (r >= 120) & (g < 150) & (b < 150)
         g_filter = (g == np.maximum(np.maximum(r, g), b)) & (g >= 120) & (r < 150) & (b < 150)
         b_filter = (b == np.maximum(np.maximum(r, g), b)) & (b >= 120) & (r < 150) & (g < 150)
-        y_filter = ((r >= 128) & (g >= 128) & (b < 100))
-
-        r[y_filter], g[y_filter] = 255, 255
-        b[np.invert(y_filter)] = 0
+        black = ((r<50) & (g<50)& (b<50))
 
         b[b_filter], b[np.invert(b_filter)] = 255, 0
         r[r_filter], r[np.invert(r_filter)] = 255, 0
         g[g_filter], g[np.invert(g_filter)] = 255, 0
+        b[black], g[black], r[black] = 0, 255, 255
 
-        flattened = cv2.merge((b, g, r))
-        return flattened
+        flattened = cv2.merge((r, g, b))
+        img_gray = cv2.cvtColor(flattened, cv2.COLOR_BGR2GRAY)
+        img_gray[(np.where(img_gray == 0))] = 255
+        img_gray[(np.where(img_gray == 179))] = 0
+        img_gray[(np.where(img_gray == 29))] = 255
+
+        return img_gray
 
     @staticmethod
     def preprocess(b64_raw_img):
@@ -83,241 +74,176 @@ class ImageProcessor(object):
         return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     @staticmethod
-    def draw_lines(img):
-        blurred = cv2.GaussianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), (3, 3), 0)
-        edges   = cv2.Canny(blurred, 30, 50, apertureSize=3)
+    def find_arrow_dir(target, img = None):
+        im_width = target.shape[1]
+        im_height = target.shape[0]
+        for x in range(im_width):
+            if target[(im_height - 1), x] != 76:
+                return None
+        red_start_y = 0
+        for x in [0, (im_width - 1)]:
+            for y in range(im_height):
+                y = im_height - y - 1
+                if target[y, x] != 76:
+                    if red_start_y < (y + 1):
+                        red_start_y = y + 1
+                    break
+        red_block = target[red_start_y:im_height, 0:im_width]
+        if img is not None:
+            cv2.line(img, (0, red_start_y), (im_width - 1, red_start_y), 255)
+        b, r, w = ImageProcessor._color_rate(red_block)
+        if w == 0:
+            return None
 
-        lines = cv2.HoughLinesP(edges, 6, np.pi/60, 100, 5, 5)
-        if lines is not None:
-            for line in lines:
-                for x1, y1, x2, y2 in line:
-                    cv2.line(img, (x1,y1), (x2,y2), (255, 255, 255), 2)
+        _x, _y = [], []
+        for y in range(red_block.shape[0]):
+            for x in range(red_block.shape[1]):
+                if red_block[y, x] == 255:
+                    _y.append(y)
+                    _x.append(x)
+                    break
 
-        return img
+        if len(_x) < 5:
+            return None
 
-    @staticmethod
-    def _centre_channel(b, g, r):
-        x, y = (b.shape[1] - 1 )// 2, b.shape[0] - 1
 
-        r_filter = (r == np.maximum(np.maximum(r, g), b)) & (r >= 120) & (g < 150) & (b < 150)
-        g_filter = (g == np.maximum(np.maximum(r, g), b)) & (g >= 120) & (r < 150) & (b < 150)
-        b_filter = (b == np.maximum(np.maximum(r, g), b)) & (b >= 120) & (r < 150) & (g < 150)
-        y_filter = ((r >= 128) & (g >= 128) & (b < 100))
+        m, _ = np.polyfit(_x, _y, 1)
+        print("m = %.2f" % m)
+        if m < 0:
+            return "F"
+        elif m > 0:
+            return "B"
 
-        r[y_filter], g[y_filter], b[np.invert(y_filter)]  = 255, 255, 0
-        b[b_filter], b[np.invert(b_filter)] = 255, 0
-        r[r_filter], r[np.invert(r_filter)] = 255, 0
-        g[g_filter], g[np.invert(g_filter)] = 255, 0
-
-        if r[y, x] == 0 and g[y, x] == 0 and b[y, x] == 0:
-            return 'black', None
-
-        if r[y, x] == 255 and g[y, x] == 255:
-            if b[y, x] == 0:
-                return 'yellow', None
-            else:
-                return 'white', None
-
-        if g[y, x] == 255:
-            return "green", g
-        elif r[y, x] == 255:
-            return "red", r
-        else: #g[79, 159] == 255:
-            return "blue", b
-
-    @staticmethod
-    def _find_road_angle(target):
-        left_x, left_y = [], []
-        right_x, right_y = [], []
-        l_angle, r_angle = None, None
-        for _y in range(target.shape[0]):
-            y = target.shape[0] - 1 -_y
-            color_beg = False
-            for x in range(target.shape[1]):
-                if target[y, x] == 255 and color_beg == False:
-                    if len(left_x) == 0 or abs(x - left_x[-1]) < 5:
-                        color_beg = True
-                        if x > 0:
-                            left_y.append(y)
-                            left_x.append(x)
-
-                if target[y, x] == 0 and color_beg == True:
-                    if len(right_x) == 0 or abs(x - right_x[-1]) < 5:
-                        if x < 320:
-                            right_y.append(y)
-                            right_x.append(x)
-                            break
-
-        if len(left_x) > 3:
-            if max(left_x) - min(left_x) > 10:
-                m, _ = np.polyfit(left_x, left_y, 1)
-                l_angle = math.degrees(math.atan(-1./m))
-            else:
-                m, _ = np.polyfit(left_y, left_x, 1)
-                l_angle = math.degrees(math.atan(-m))
-
-        if len(right_x) > 3:
-            if max(right_x) - min(right_x) > 10:
-                m, _ = np.polyfit(right_x, right_y, 1)
-                r_angle = math.degrees(math.atan(-1./m))
-            else:
-                m, _ = np.polyfit(right_y, right_x, 1)
-                r_angle = math.degrees(math.atan(-m))
-
-        return l_angle, r_angle
+        return None
 
     @staticmethod
-    def _escape_from_wall(color, b, g, r):
-        height = b.shape[0]
+    def find_wall_angle(target, debug = False):
+        _y, _x = np.where(target == 0)
+        if len(_y) < 10:
+            return None, -1, -1, -1, -1
+        elif len(_y) == (target.shape[0] * target.shape[1]):
+            return 180, 0, target.shape[0] - 1, target.shape[1] - 1, target.shape[0] - 1
+
+        left_x = min(_x)
+        left_y = max(_y[np.where(_x == left_x)])
+
+        right_x = max(_x)
+        right_y = max(_y[np.where(_x == right_x)])
+
+        max_y = max(_y)
+        if max_y > (max([left_y,right_y]) + 5): # strange shape so use max-y to be rectangle
+            left_y = left_x = max_y
+
+        if debug:
+            print("wall: (%d, %d) ~ (%d, %d)" % (left_x, left_y, right_x, right_y))
+
+        if right_x != left_x:
+            m, _ = np.polyfit([left_x, right_x], [left_y, right_y], 1)
+            angle = math.degrees(math.atan(-1./m))
+        else:
+            m, _ = np.polyfit([left_y, right_y], [left_x, right_x], 1)
+            angle = math.degrees(math.atan(-m))
+
+        return angle, left_x, left_y, right_x, right_y
+
+    @staticmethod
+    def find_road_angle(target, debug = False):
+        _y, _x = np.where(target == 76) # red-part
+        if len(_y) == (target.shape[0] * target.shape[1]): # full-red
+            return 180, 76
+
+        if len(_y) == 0: # full-white
+            return 180, 255
+
+        width = target.shape[1]
+        height = target.shape[0]
         color_seq = []
-        x = 0
-        for y in range(height):
-            # black
-            if r[y, x] == 0 and g[y, x] == 0 and b[y, x] == 0:
-                if len(color_seq) == 0 or color_seq[-1] != 'black':
-                    color_seq.append('black')
-                continue
-            if r[y, x] == 255 and g[y, x] == 255:
-                # yellow
-                if b[y, x] == 0:
-                    if len(color_seq) == 0 or color_seq[-1] != 'yellow':
-                        color_seq.append('yellow')
+
+        for x in range(width):
+            if len(color_seq) == 0 or target[height - 1, x] != color_seq[-1]:
+                color_seq.append(target[height - 1, x])
+
+        if len(color_seq) == 1 and color_seq[0] == 255: # white in bottom
+            line_x, line_y, none_x = [], [], []
+            for x in range(target.shape[1]):
+                y_set = _y[np.where(_x == x)]
+                if len(y_set) > 0:
+                    line_y.append(max(y_set))
+                    line_x.append(x)
                 else:
-                    if len(color_seq) == 0 or color_seq[-1] != 'white':
-                        color_seq.append('white')
-                continue
-            # red
-            if r[y, x] == 255 and (len(color_seq) == 0 or color_seq[-1] != 'red'):
-                color_seq.append('red')
-            elif g[y, x] == 255 and (len(color_seq) == 0 or color_seq[-1] != 'green'):
-                color_seq.append('green')
-            elif b[y, x] == 255 and (len(color_seq) == 0 or color_seq[-1] != 'blue'):
-                color_seq.append('blue')
-
-        if color == 'blue' and len(color_seq) > 2:
-            if color_seq[-2] == 'red' and color_seq[-3] == 'black':
-                return 90
-            if color_seq[-2] == 'green' and color_seq[-3] == 'red':
-                return 90
-            if color_seq[-2] == 'red' and color_seq[-3] == 'green':
-                return -90
-            if color_seq[-2] == 'green' and color_seq[-3] == 'black':
-                return -90
-
-        if color == 'red' and len(color_seq) > 1:
-            if color_seq[-2] == 'black':
-                return 90
-            if color_seq[-2] == 'green':
-                return -90
-        if color == 'red' and len(color_seq) > 3:
-            if color_seq[-4] == 'black':
-                return 90
-            if color_seq[-4] == 'green':
-                return -90
-
-        if color == 'green' and len(color_seq) > 1:
-            if color_seq[-2] == 'black':
-                return -90
-            if color_seq[-2] == 'red':
-                return 90
-        if color == 'green' and len(color_seq) > 3:
-            if color_seq[-4] == 'black':
-                return -90
-            if color_seq[-4] == 'red':
-                return 90
-
-        return 180
-
-    @staticmethod
-    def find_median_angle(img):
-        crop_img = original_img[140:240, 0:320] # become 100 * 320
-        b, g, r = cv2.split(crop_img)
-        color, target = ImageProcessor._centre_channel(b, g, r)
-        if target is None:
-            return color, 180, None
-        l_angle, r_angle = ImageProcessor._find_road_angle(target)
-
-        if l_angle is None:
-            if r_angle is None or r_angle > 88. or r_angle < -88.: # parallel forward to wall
-                return color, ImageProcessor._escape_from_wall(color, b, g, r), target
+                    none_x.append(x)
+            if len(none_x) == 0:
+                m, _ = np.polyfit(line_x, line_y, 1)
+                return math.degrees(math.atan(-1./m)), 255
+            if min(none_x) > 0 and max(none_x) < (target.shape[1] - 1):
+                px = (min(none_x) + max(none_x)) // 2
+                m = math.atan2(px - (target.shape[1] // 2), target.shape[0])
+                return math.degrees(m), 255
+            #if min(none_x) == 0 or max(none_x) == (target.shape[1] - 1):
             else:
-                return color, r_angle, target
+                m, _ = np.polyfit(line_x, line_y, 1)
+                return math.degrees(math.atan(-1./m)), 255
 
-        if r_angle is None:
-            if l_angle > 88. or l_angle < -88.: # parallel forward to wall
-                return color, ImageProcessor._escape_from_wall(color, b, g, r), target
-            return color, l_angle, target
+        if len(color_seq) == 1 and color_seq[0] == 76: # red in bottom
+            line_x, line_y, none_x = [], [], []
+            for x in range(target.shape[1]):
+                y_set = _y[np.where(_x == x)]
+                # skip different red blocks
+                if len(y_set) < target.shape[0] - min(y_set) - 20:
+                    fake_min_y = min(y_set)
+                    y_set = y_set[np.where(y_set > (fake_min_y + 5))]
+                    if len(y_set) < target.shape[0] - min(y_set) - 20:
+                        continue
+                min_y = min(y_set)
+                if min_y > 0:
+                    line_y.append(min_y)
+                    line_x.append(x)
+                else:
+                    none_x.append(x)
+                    if debug:
+                        print("x:%d, y:0" % x)
+            if len(line_x) < 2:
+                ImageProcessor.save_image('./frames', target, suffix = 'no_linex')
+                return 180, 76
 
-        return color, (r_angle + l_angle )/2, target
+            if len(none_x) == 0:
+                m, _ = np.polyfit(line_x, line_y, 1)
+                return math.degrees(math.atan(-1./m)), 76
+            if min(none_x) > 0 and max(none_x) < (target.shape[1] - 1):
+                px = (min(none_x) + max(none_x)) // 2
+                m = math.atan2(px - (target.shape[1] // 2), target.shape[0])
+                return math.degrees(m), 76
+            #if min(none_x) == 0 or max(none_x) == (target.shape[1] - 1):
+            else:
+                m, _ = np.polyfit(line_x, line_y, 1)
+                return math.degrees(math.atan(-1./m)), 76
 
-    @staticmethod
-    def find_color_percentage(img):
-        crop_img = img[160:240, 0:320] # become 80 * 320
-        b, g, r = cv2.split(crop_img)
-        r_filter = (r == np.maximum(np.maximum(r, g), b)) & (r >= 120) & (g < 150) & (b < 150)
-        g_filter = (g == np.maximum(np.maximum(r, g), b)) & (g >= 120) & (r < 150) & (b < 150)
-        b_filter = (b == np.maximum(np.maximum(r, g), b)) & (b >= 120) & (r < 150) & (g < 150)
-        y_filter = ((r >= 128) & (g >= 128) & (b < 100))
-
-        r[y_filter], g[y_filter], b[np.invert(y_filter)]  = 255, 255, 0
-
-        color = 0
-        total = 80 * 320
-        zeros = np.zeros(crop_img.shape[:2], dtype = "uint8")
-
-        b[b_filter], b[np.invert(b_filter)] = 255, 0
-        if b[79, 159] == 255:
-            for blue in np.nditer(b):
-                if blue == 255:
-                    color += 1
-            return "blue", int(100 * color // total), cv2.merge([b, zeros, zeros])
-
-        r[r_filter], r[np.invert(r_filter)] = 255, 0
-        if r[79, 159] == 255:
-            for red in np.nditer(r):
-                if red == 255:
-                    color += 1
-            return "red", int(100 * color // total), cv2.merge([zeros, zeros, r])
-
-        g[g_filter], g[np.invert(g_filter)] = 255, 0
-        if g[79, 159] == 255:
-            for green in np.nditer(g):
-                if green == 255:
-                    color += 1
-            return "green", int(100 * color // total), cv2.merge([zeros, g, zeros])
-
-        return "black", 0, None
-
+        return None, None
 
     @staticmethod
-    def find_steering_angle_by_color(img):
-        r, g, b      = cv2.split(img)
+    def find_red_angle(im_gray, debug = False):
+        middle_img   = ImageProcessor._crop_gray(im_gray, 0.6, 0.8)
+        image_height = middle_img.shape[0]
+        image_width  = middle_img.shape[1]
+        camera_x     = image_width / 2
 
-        image_height = img.shape[0]
-        image_width  = img.shape[1]
-        camera_x     = image_width // 2
-        image_sample = slice(int(image_height * 0.2), int(image_height))
-        sr, sg, sb   = r[image_sample, :], g[image_sample, :], b[image_sample, :]
-        is_left_wall, is_right_wall = ImageProcessor.wall_detection(sr, sg, sb)
+        _y, _x = np.where(middle_img == 76)
 
-        if is_left_wall:
-            return 2*np.pi
-        if is_right_wall:
-            return -2*np.pi
-
-        track_list   = [sr, sg, sb]
-        tracks       = map(lambda x: len(x[x > 20]), [sr, sg, sb])
-        tracks_seen  = list(filter(lambda y: y > 50, tracks))
-
-        if len(tracks_seen) == 0:
-            return 0.0
-
-        maximum_color_idx = np.argmax(tracks, axis=None)
-        _target = track_list[maximum_color_idx]
-        _y, _x = np.where(_target == 255)
-
-        px = 0
+        px = 0.0
         if _x is not None and len(_x) > 0:
             px = np.mean(_x)
-        steering_radian = math.atan2(image_height, (px - camera_x))
-        return (np.pi/2 - steering_radian) * 2.0
+        if np.isnan(px):
+            return 0.0
+
+        steering_radian = math.atan2(px - camera_x, 3 * image_height)
+
+        if debug:
+            #draw the steering direction
+            print("red angle px = %.2f" % px)
+            cv2.rectangle(im_gray, (int(px) - 10, (im_gray.shape[0] * 6) // 10), (int(px) + 10, (im_gray.shape[0] * 8) // 10), 0, 2)
+            r = im_gray.shape[0]
+            x = im_gray.shape[1] // 2 + int(r * math.sin(steering_radian))
+            y = im_gray.shape[0]    - int(r * math.cos(steering_radian))
+            cv2.line(im_gray, (im_gray.shape[1] // 2, im_gray.shape[0] - 1), (x, y), 0, 2)
+
+        return math.degrees(steering_radian)
