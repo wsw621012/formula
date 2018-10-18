@@ -13,6 +13,7 @@ target = ImageProcessor._crop_gray(im_gray, 0.6, 1.0)
 b, r, w = ImageProcessor._color_rate(target)
 print("b:%.0f, r:%.0f, w:%.0f" %(100*b, 100*r, 100*w))
 
+#wall_angle, lx, ly, rx, ry = ImageProcessor.find_wall_angle(target, debug = True)
 wall_angle, lx, ly, rx, ry = ImageProcessor.find_wall_angle(target, debug = True)
 if wall_angle == 180:
     if r == 1:
@@ -20,7 +21,7 @@ if wall_angle == 180:
     else:
         print("wall_angle = 180, & red < 100%% in foot, angle = 180")
 elif wall_angle is None:
-    angle, color = ImageProcessor.find_road_angle(target, debug = True)
+    angle, color = ImageProcessor.test_road_angle(target, debug = True)
     if angle is None:
         angle = ImageProcessor.find_red_angle(im_gray, debug = True)
     if color is None:

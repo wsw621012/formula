@@ -121,21 +121,21 @@ class ImageProcessor(object):
         _y, _x = np.where(target == 0)
         if len(_y) < 10:
             return None, -1, -1, -1, -1
-        elif len(_y) == (target.shape[0] * target.shape[1]):
+        if len(_y) == (target.shape[0] * target.shape[1]):
             return 180, 0, target.shape[0] - 1, target.shape[1] - 1, target.shape[0] - 1
 
         left_x = min(_x)
-        left_y = max(_y[np.where(_x == left_x)])
+        left_y = max(_y[_x == left_x])
 
         right_x = max(_x)
-        right_y = max(_y[np.where(_x == right_x)])
+        right_y = max(_y[_x == right_x])
 
         max_y = max(_y)
         if max_y > (max([left_y,right_y]) + 5): # strange shape so use max-y to be rectangle
             left_y = left_x = max_y
 
-        if debug:
-            print("wall: (%d, %d) ~ (%d, %d)" % (left_x, left_y, right_x, right_y))
+        #if debug:
+        #    print("wall: (%d, %d) ~ (%d, %d)" % (left_x, left_y, right_x, right_y))
 
         if right_x != left_x:
             m, _ = np.polyfit([left_x, right_x], [left_y, right_y], 1)
@@ -144,7 +144,31 @@ class ImageProcessor(object):
             m, _ = np.polyfit([left_y, right_y], [left_x, right_x], 1)
             angle = math.degrees(math.atan(-m))
 
+        if debug:
+            print("angle = %.2f" % angle)
+
         return angle, left_x, left_y, right_x, right_y
+
+    @staticmethod
+    def test_road_angle(target, debug = False):
+        if not (255 in target): # full red
+            return 180, 76
+        if not (76 in target): # full white
+            return 180, 255
+
+        width = target.shape[1]
+        height = target.shape[0]
+
+        _y, _x = np.where(target[np.argmin(target, axis = 0), :] == 76)
+        if not (0 in _y):
+            if max(_y) == min(_y):
+                return 180, target[height - 1, width // 2]
+            m, _ = np.polyfit(_x, _y, 1)
+            angle = math.degrees(math.atan(-1./m))
+            print("np-angle = %.2f" % angle)
+            return angle, target[height - 1, width // 2]
+
+        return ImageProcessor.find_road_angle(target, debug)
 
     @staticmethod
     def find_road_angle(target, debug = False):
@@ -157,13 +181,8 @@ class ImageProcessor(object):
 
         width = target.shape[1]
         height = target.shape[0]
-        color_seq = []
 
-        for x in range(width):
-            if len(color_seq) == 0 or target[height - 1, x] != color_seq[-1]:
-                color_seq.append(target[height - 1, x])
-
-        if len(color_seq) == 1 and color_seq[0] == 255: # white in bottom
+        if not (76 in target[height - 1, :]): # white in bottom
             line_x, line_y, none_x = [], [], []
             for x in range(target.shape[1]):
                 y_set = _y[np.where(_x == x)]
@@ -184,7 +203,7 @@ class ImageProcessor(object):
                 m, _ = np.polyfit(line_x, line_y, 1)
                 return math.degrees(math.atan(-1./m)), 255
 
-        if len(color_seq) == 1 and color_seq[0] == 76: # red in bottom
+        if not (255 in target[height - 1, :]): # red in bottom
             line_x, line_y, none_x = [], [], []
             for x in range(target.shape[1]):
                 y_set = _y[np.where(_x == x)]

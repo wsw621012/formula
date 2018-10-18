@@ -102,11 +102,12 @@ class Worker():
         self.last_wall_angle = None
         self.owed_angle = 0
 
-    def _detect_wall(self, im_gray, steering_angle):
+    def _detect_wall(self, im_gray, steering_angle, action):
         target = ImageProcessor._crop_gray(im_gray, 0.6, 1.0)
         wall_angle, lx, ly, rx, ry = ImageProcessor.find_wall_angle(target)
 
         if wall_angle is None:
+            self.last_wall_angle = None
             return None
 
         if wall_angle == 180:
@@ -115,17 +116,28 @@ class Worker():
 
         # degrees:74 is atan(320 / 95)
         # degrees:60 is atan(160 / 95)
-        self.last_wall_angle = wall_angle
-        if (ly + ry) // 2 >= 25: # this is the minimaize radius to turn
-            if wall_angle > 78:
-                self.coach_actions.append(Reverse.TurnRight) #speed down
-                return wall_angle
-            elif wall_angle < -78:
-                self.coach_actions.append(Reverse.TurnLeft) #speed down
+        if action >= 0:
+            self.last_wall_angle = wall_angle
+
+        wall_distance = target.shape[0] - ((ly + ry) // 2)
+        #if (ly + ry) // 2 >= 25: # too close wall
+        if wall_distance < 70:
+            if abs(self.last_wall_angle) > 78:
+                if action < 0: # reversing
+                    if self.last_wall_angle > 0:
+                        self.coach_actions.append(Reverse.TurnLeft)
+                    else:
+                        self.coach_actions.append(Reverse.TurnRight)
+                else:
+                    if self.last_wall_angle > 0:
+                        self.coach_actions.append(Action.TurnRight)
+                    else:
+                        self.coach_actions.append(Action.TurnLeft)
                 return wall_angle
 
         if lx > 0 and lx > (target.shape[1] - rx): # obstacle was approach left-hand-side
-            #self.coach_actions.append(Action.TurnLeft)
+            #angle = wall_angle
+            #if ly > 5: #wall
             px = lx // 2
             angle = math.degrees(math.atan2(px - (target.shape[1] // 2), target.shape[0] - ly))
             if steering_angle < angle:
@@ -135,7 +147,8 @@ class Worker():
             return angle
 
         if (target.shape[1] - rx - 1) > lx:
-            #self.coach_actions.append(Action.TurnRight) # obstacle was approach right-hand-side
+            #angle = wall_angle
+            #if ry > 5: #wall
             px = (target.shape[1] + rx) // 2
             angle = math.degrees(math.atan2(px - (target.shape[1] // 2), target.shape[0] - ry))
             if steering_angle > angle:
@@ -156,20 +169,13 @@ class Worker():
                 self.coach_actions.append(Action.TurnLeft)
         return wall_angle
 
-    def processState(self, state):
+    def processState(self, state, action = 0):
         image = ImageProcessor.preprocess(state['image'])
         del state['image']
         im_gray = ImageProcessor._flatten_rgb_to_gray(image)
         steering_angle = float(state['steering_angle'])
 
-        '''
-        if abs(self.owed_angle) > 0:
-            self.owed_angle -= steering_angle
-            if abs(self.owed_angle) < 10:
-                self.owed_angle = 0
-        '''
-
-        angle, color = self._detect_wall(im_gray, steering_angle), 0
+        angle, color = self._detect_wall(im_gray, steering_angle, action), 0
         if angle == None:
             angle, color = ImageProcessor.find_road_angle(im_gray)
 
@@ -189,28 +195,22 @@ class Worker():
 
     def reward_and_coach(self, state, state_):
         #print("mse err: %.2f -> %.2f" % (float(state['mse']), float(state_['mse'])))
-        '''
-        if self.owed_angle > 0:
-            self.coach_actions.append(Action.TurnRight)
-            return 0
-
-        if self.owed_angle < 0:
-            self.coach_actions.append(Action.TurnLeft)
-            return 0
-        '''
 
         previous_angle = float(state['angle'])
         current_angle = float(state_['angle'])
         steering_angle = float(state_['steering_angle'])
 
-        if current_angle == 180:
+        if abs(current_angle) > 70:
             if len(self.coach_actions) == 0:
                 if self.last_wall_angle is None:
-                    self.coach_actions.append(Reverse.Backward)
+                    if current_angle > 0:
+                        self.coach_actions.append(Action.TurnRight)
+                    else:
+                        self.coach_actions.append(Action.TurnLeft)
                 elif self.last_wall_angle > 0:
-                    self.coach_actions.append(Reverse.TurnLeft)
+                    self.coach_actions.append(Action.TurnRight)
                 else:
-                    self.coach_actions.append(Reverse.TurnRight)
+                    self.coach_actions.append(Reverse.TurnLeft)
 
         if current_angle > 0 and current_angle < previous_angle:
             return 1.
@@ -277,10 +277,10 @@ class Worker():
                         a = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:[s]})[0]
 
                     state_, d = self.env.step(state, a)
-                    s1 = self.processState(state_)
+                    s1 = self.processState(state_, a)
                     r = self.reward_and_coach(state, state_)
 
-                    if a > 0: #only learn go forward action
+                    if a > 0 and r < 0: # no reverse actions.
                         print("angle %.2f -> %.2f - action: %s, reward: %.2f" % (float(state['angle']), float(state_['angle']), Action(a).name, r))
                         total_steps += 1
                         episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.

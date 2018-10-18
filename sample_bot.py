@@ -109,7 +109,7 @@ class ImageProcessor(object):
     @staticmethod
     def show_image(img, name = "image", scale = 1.0):
         if scale and scale != 1.0:
-            img = cv2.resize(img, newsize, interpolation=cv2.INTER_CUBIC)
+            img = cv2.resize(img, newsize, interpolation=cv2.INTER_CUBIC) 
 
         cv2.namedWindow(name, cv2.WINDOW_AUTOSIZE)
         cv2.imshow(name, img)
@@ -211,7 +211,7 @@ class ImageProcessor(object):
 
             if (thetaA0 is None or abs(thetaA - thetaA0) <= tolerance) and \
                (thetaB0 is None or abs(thetaB - thetaB0) <= tolerance):
-
+                
                 if matched is None:
                     matched = vectors[i]
                     matched_distance, matched_length, matched_thetaA, matched_thetaB, matched_coord = matched
@@ -291,7 +291,7 @@ class ImageProcessor(object):
             cv2.line(img, best_coord[:2], best_coord[2:], (0, 255, 255), 2)
 
         if abs(best_thetaB - np.pi/2) <= tolerance and abs(best_thetaA - best_thetaB) >= np.pi/4:
-            print("*** sharp turning")
+            print "*** sharp turning"
             best_x1, best_y1, best_x2, best_y2 = best_coord
             f = lambda x: int(((float(best_y2) - float(best_y1)) / (float(best_x2) - float(best_x1)) * (x - float(best_x1))) + float(best_y1))
             left_x , left_y  = 0, f(0)
@@ -345,10 +345,10 @@ class ImageProcessor(object):
         camera_x     = image_width / 2
         img_g        = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         tracks       = map(lambda x: len(x[x > 20]), [img_g])
-        print(tracks)
+        #print tracks
         tracks_seen  = filter(lambda y: y > 2000, tracks)
 
-        if len(list(tracks_seen)) == 0:
+        if len(tracks_seen) == 0:
             return 0.0
 
         _target = img_g
@@ -445,8 +445,7 @@ class Car(object):
         speed               = float(dashboard["speed"])
         img                 = ImageProcessor.bgr2rgb(np.asarray(Image.open(BytesIO(base64.b64decode(dashboard["image"])))))
         del dashboard["image"]
-        print(datetime.now())
-        print(dashboard)
+        print datetime.now(), dashboard;
         total_time = float(dashboard["time"])
         elapsed    = total_time
 
@@ -490,7 +489,7 @@ if __name__ == "__main__":
         logit("Start recording images to %s..." % args.record)
 
     sio = socketio.Server()
-    def send_control(steering_angle, throttle):
+    def send_control(steering_angle, throttle):    	  
         sio.emit(
             "steer",
             data={
@@ -499,7 +498,7 @@ if __name__ == "__main__":
             },
             skip_sid=True)
         #print "emit control " +str(datetime.now())
-
+                   
     def send_restart():
         sio.emit(
             "restart",
@@ -525,3 +524,4 @@ if __name__ == "__main__":
     eventlet.wsgi.server(eventlet.listen(('', 4567)), app)
 
 # vim: set sw=4 ts=4 et :
+
