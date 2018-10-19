@@ -12,7 +12,7 @@ class gameEnv(object):
         self.sio = sio
         self.is_finished = False
         #self.steering_angle_list = [2.86, 10.36, 37.24, 45.0]
-        self.steering_angle_list = [5, 10, 20, 40]
+        self.steering_angle_list = np.asarray([9.26, 18.78, 28.88, 40.1])
 
         @sio.on('telemetry')
         def telemetry(sid, msg):
@@ -64,25 +64,11 @@ class gameEnv(object):
     def step(self, state, action):
         steering_angle = float(state['steering_angle'])
         new_angle = 0 # forward
-        #a = self.steering_angle_list
+        a = self.steering_angle_list
         if action == Action.TurnRight or action == Reverse.TurnRight:
-            if steering_angle < 5:
-                new_angle = 5
-            elif steering_angle < 10:
-                new_angle = 10
-            elif steering_angle < 20:
-                new_angle = 20
-            else:
-                new_angle = 40
+            new_angle = min(40, min(a[a > steering_angle]))
         elif action == Action.TurnLeft or action == Reverse.TurnLeft:
-            if steering_angle > -5:
-                new_angle = -5
-            elif steering_angle > -10:
-                new_angle = -10
-            elif steering_angle > -20:
-                new_angle = -20
-            else:
-                new_angle = -40
+            new_angle = -min(40, min(a[a > abs(min(0, steering_angle))]))
 
         if action >= 0:
             self._send_cmd(new_angle, 1.0) # dan said always keep highest spped

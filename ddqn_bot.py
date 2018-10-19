@@ -9,6 +9,7 @@ import scipy.misc
 import os
 import threading
 
+from multiprocessing import Queue
 from action import Action, Reverse
 from game_env import gameEnv
 from image_processor import ImageProcessor
@@ -75,18 +76,36 @@ def updateTargetGraph(tfVars,tau):
         op_holder.append(tfVars[idx+total_vars//2].assign((var.value()*tau) + ((1-tau)*tfVars[idx+total_vars//2].value())))
     return op_holder
 
-def updateTarget(op_holder,sess):
+def updateTarget(op_holder, sess):
     for op in op_holder:
         sess.run(op)
 
-batch_size = 32 #How many experiences to use for each training step.
-update_freq = 4 #How often to perform a training step.
+def update_job(myBuffer, op_holder, queue, sess, mainQN, targetQN):
+    while True:
+        batch_size = queue.get()
+        trainBatch = myBuffer.sample(batch_size) #Get a random batch of experiences.
+        #Below we perform the Double-DQN update to the target Q-values
+        Q1 = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:np.vstack(trainBatch[:,3])})
+        Q2 = sess.run(targetQN.Qout,feed_dict={targetQN.scalarInput:np.vstack(trainBatch[:,3])})
+        end_multiplier = -(trainBatch[:,4] - 1)
+        doubleQ = Q2[range(batch_size),Q1]
+        targetQ = trainBatch[:,2] + (y*doubleQ * end_multiplier)
+        #Update the network with our target values.
+        _ = sess.run(mainQN.updateModel, \
+            feed_dict={mainQN.scalarInput:np.vstack(trainBatch[:,0]),mainQN.targetQ:targetQ, mainQN.actions:trainBatch[:,1]})
+
+        for op in op_holder: #Update the target network toward the primary network.
+            sess.run(op)
+
+
+batch_size = 64 #How many experiences to use for each training step.
+update_freq = 100 #How often to perform a training step.
 y = .99 #Discount factor on the target Q-values
 startE = 1 #Starting chance of random action
 endE = 0.1 #Final chance of random action
 annealing_steps = 10000. #How many steps of training to reduce startE to endE.
 num_episodes = 10000 #How many episodes of game environment to train network with.
-pre_train_steps = 10000 #How many steps of random actions before training begins.
+pre_train_steps = 2000 #How many steps of random actions before training begins.
 max_epLength = 50 #The max allowed length of our episode.
 load_model = True #Whether to load a saved model.
 path = "./dqn" #The path to save our model to.
@@ -100,10 +119,11 @@ class Worker():
         self.frame_count = 0
         self.coach_actions = []
         self.last_wall_angle = None
-        self.owed_angle = 0
+        self.update_channel = Queue()
+        #self.last_icon = None
 
     def _detect_wall(self, im_gray, steering_angle, action):
-        target = ImageProcessor._crop_gray(im_gray, 0.6, 1.0)
+        target = ImageProcessor._crop_gray(im_gray, 0.58, 1.0)
         wall_angle, lx, ly, rx, ry = ImageProcessor.find_wall_angle(target)
 
         if wall_angle is None:
@@ -121,8 +141,9 @@ class Worker():
 
         wall_distance = target.shape[0] - ((ly + ry) // 2)
         #if (ly + ry) // 2 >= 25: # too close wall
+
         if wall_distance < 70:
-            if abs(self.last_wall_angle) > 78:
+            if self.last_wall_angle is not None and abs(self.last_wall_angle) > 78:
                 if action < 0: # reversing
                     if self.last_wall_angle > 0:
                         self.coach_actions.append(Reverse.TurnLeft)
@@ -185,12 +206,19 @@ class Worker():
         # no wall
         state['angle'] = str(angle)
         image = image[100:240, 0:320]
-        return np.reshape(scipy.misc.imresize(image, [84,84]), [21168]) / 255.0
+        icon = scipy.misc.imresize(image, [84,84])
+        #if self.last_icon is None:
+        #    state['err'] = '100'
+        #else:
+        #    state['err'] = str(self.mse(icon))
+        #self.last_icon = icon.astype("float")
+
+        return np.reshape(icon, [21168]) / 255.0
 
     #compare 2 image
-    def mse(self, imageA, imageB):
-	    err = np.sum((imageA.astype("float") - imageB.astype("float")) ** 2)
-	    err /= float(imageA.shape[0] * imageA.shape[1])
+    def mse(self, icon):
+	    err = np.sum((self.last_icon - icon.astype("float")) ** 2)
+	    err /= float(icon.shape[0] * icon.shape[1])
 	    return err
 
     def reward_and_coach(self, state, state_):
@@ -199,6 +227,10 @@ class Worker():
         previous_angle = float(state['angle'])
         current_angle = float(state_['angle'])
         steering_angle = float(state_['steering_angle'])
+
+        #err, err_ = float(state['err']), float(state_['err'])
+        #if err < 20 and err_ < 20:
+        #    print("err from %.2f -> %.2f" % (err, err_))
 
         if abs(current_angle) > 70:
             if len(self.coach_actions) == 0:
@@ -224,19 +256,19 @@ class Worker():
         if current_angle <= -40 and steering_angle <= -40:
             return 1.
 
-        if abs(current_angle) < 10:
+        if abs(current_angle) < 5:
             return 1.
 
         return -1
 
-
     def train(self):
         tf.reset_default_graph()
+
         mainQN = Qnetwork(h_size, env)
         targetQN = Qnetwork(h_size, env)
 
         init = tf.global_variables_initializer()
-        saver = tf.train.Saver(max_to_keep=10)
+        saver = tf.train.Saver(max_to_keep=5)
         trainables = tf.trainable_variables()
 
         targetOps = updateTargetGraph(trainables,tau)
@@ -257,6 +289,11 @@ class Worker():
 
         with tf.Session() as sess:
             sess.run(init)
+
+            #update_job(myBuffer, op_holder, queue, sess):
+            updateThread = threading.Thread(target=update_job, args=(myBuffer, targetOps, self.update_channel, sess,mainQN, targetQN,))  # <- note extra ','
+            updateThread.start()
+
             if load_model == True:
                 print('Loading Model...')
                 ckpt = tf.train.get_checkpoint_state(path)
@@ -280,8 +317,9 @@ class Worker():
                     s1 = self.processState(state_, a)
                     r = self.reward_and_coach(state, state_)
 
-                    if a > 0 and r < 0: # no reverse actions.
-                        print("angle %.2f -> %.2f - action: %s, reward: %.2f" % (float(state['angle']), float(state_['angle']), Action(a).name, r))
+                    if a >= 0:
+                        #if r < 0: # no reverse actions.
+                        #    print("angle %.2f -> %.2f - action: %s, reward: %.2f" % (float(state['angle']), float(state_['angle']), Action(a).name, r))
                         total_steps += 1
                         episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
 
@@ -290,18 +328,9 @@ class Worker():
                             e -= stepDrop
 
                         if total_steps % (update_freq) == 0:
-                            trainBatch = myBuffer.sample(batch_size) #Get a random batch of experiences.
-                            #Below we perform the Double-DQN update to the target Q-values
-                            Q1 = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:np.vstack(trainBatch[:,3])})
-                            Q2 = sess.run(targetQN.Qout,feed_dict={targetQN.scalarInput:np.vstack(trainBatch[:,3])})
-                            end_multiplier = -(trainBatch[:,4] - 1)
-                            doubleQ = Q2[range(batch_size),Q1]
-                            targetQ = trainBatch[:,2] + (y*doubleQ * end_multiplier)
-                            #Update the network with our target values.
-                            _ = sess.run(mainQN.updateModel, \
-                                feed_dict={mainQN.scalarInput:np.vstack(trainBatch[:,0]),mainQN.targetQ:targetQ, mainQN.actions:trainBatch[:,1]})
-
-                            updateTarget(targetOps,sess) #Update the target network toward the primary network.
+                            print("update target Q-values")
+                            self.update_channel.put(batch_size)
+                            #updateTarget(targetOps,sess) #Update the target network toward the primary network.
                     rAll += r
                     s = s1
                     state = state_
@@ -321,6 +350,7 @@ class Worker():
                     break
 
             saver.save(sess,path+'/model-'+str(i)+'.ckpt')
+            updateThread.join()
 
         print("Percent of succesful episodes: " + str(sum(rList)/num_episodes) + "%")
 

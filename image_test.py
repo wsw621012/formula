@@ -21,7 +21,8 @@ if wall_angle == 180:
     else:
         print("wall_angle = 180, & red < 100%% in foot, angle = 180")
 elif wall_angle is None:
-    angle, color = ImageProcessor.test_road_angle(target, debug = True)
+    ImageProcessor.test_red_angle(target, debug = True)
+    angle, color = ImageProcessor.find_road_angle(target, debug = True)
     if angle is None:
         angle = ImageProcessor.find_red_angle(im_gray, debug = True)
     if color is None:

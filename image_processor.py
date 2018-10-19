@@ -139,10 +139,14 @@ class ImageProcessor(object):
 
         if right_x != left_x:
             m, _ = np.polyfit([left_x, right_x], [left_y, right_y], 1)
-            angle = math.degrees(math.atan(-1./m))
+            if m == 0:
+                angle = 180
+            else:
+                angle = math.degrees(math.atan(-1./m))
         else:
-            m, _ = np.polyfit([left_y, right_y], [left_x, right_x], 1)
-            angle = math.degrees(math.atan(-m))
+            #m, _ = np.polyfit([left_y, right_y], [left_x, right_x], 1)
+            #angle = math.degrees(math.atan(-m))
+            angle = 0
 
         if debug:
             print("angle = %.2f" % angle)
@@ -150,25 +154,35 @@ class ImageProcessor(object):
         return angle, left_x, left_y, right_x, right_y
 
     @staticmethod
-    def test_road_angle(target, debug = False):
+    def test_red_angle(target, debug = False):
         if not (255 in target): # full red
-            return 180, 76
+            return 180
         if not (76 in target): # full white
-            return 180, 255
+            return 180
 
-        width = target.shape[1]
-        height = target.shape[0]
+        _h, _w = target.shape
 
-        _y, _x = np.where(target[np.argmin(target, axis = 0), :] == 76)
-        if not (0 in _y):
-            if max(_y) == min(_y):
-                return 180, target[height - 1, width // 2]
-            m, _ = np.polyfit(_x, _y, 1)
-            angle = math.degrees(math.atan(-1./m))
-            print("np-angle = %.2f" % angle)
-            return angle, target[height - 1, width // 2]
+        l_angle = r_angle = 90
+        #left-bound of red region
+        _lx = np.argmin(target, axis = 1)
+        _ly = np.arange(_h)[_lx != 0]
+        for ly in np.split(_ly, np.where(np.diff(_ly) != 1)[0]+1):
+            if len(ly) < 10:
+                continue
+            lx = _lx[ly]
+            m, _ = np.polyfit(lx, ly, 1)
+            print("left angle = %.2f" % math.degrees(math.atan(-1./m)))
 
-        return ImageProcessor.find_road_angle(target, debug)
+        #right-bound of red region
+        lr_target = np.fliplr(target)
+        _rx = _w - np.argmin(lr_target, axis = 1) - 1
+        _ry = np.arange(_h)[_rx != (_w - 1)]
+        for ry in np.split(_ry, np.where(np.diff(_ry) != 1)[0]+1):
+            if len(ry) < 10:
+                continue
+            rx = _rx[ry]
+            m, _ = np.polyfit(rx, ry, 1)
+            print("right angle = %.2f" % math.degrees(math.atan(-1./m)))
 
     @staticmethod
     def find_road_angle(target, debug = False):
