@@ -12,7 +12,9 @@ class gameEnv(object):
         self.sio = sio
         self.is_finished = False
         #self.steering_angle_list = [2.86, 10.36, 37.24, 45.0]
-        self.steering_angle_list = np.asarray([9.26, 18.78, 28.88, 40.1])
+        self.steering_angle_list = np.asarray([7.47, 15.07, 22.95, 31.33, 40.54])
+        self.lap = 1
+        self.elapse = 0.
 
         @sio.on('telemetry')
         def telemetry(sid, msg):
@@ -26,10 +28,18 @@ class gameEnv(object):
             print("connected...")
             self._send_control(0, 0)
 
+    def get_mix_steering_angle(self):
+        return self.steering_angle_list[0]
+
     def _process_msg(self, msg):
         if msg['status'] != '0' or int(msg['lap']) > 1 or float(msg['time']) > 300:
-            print("lap = %d, spend %.2f sec" % (int(msg['lap']) -1, float(msg['time'])))
             self.is_finished = True
+
+        if int(msg['lap']) > self.lap:
+            print("lap:%d, spend %.2f sec" % (int(msg['lap'])-1, (float(msg['time'])-self.elapse)))
+            self.lap += 1
+            self.elapse = float(msg['time'])
+
         self.dashboard.put(msg)
 
         cmd = self.command.get()
@@ -53,6 +63,8 @@ class gameEnv(object):
 
     def _send_restart(self):
         self.is_finished = False
+        self.lap = 1
+        self.elapse = 0.
         self.sio.emit(
             "restart",
             data={},
@@ -65,10 +77,14 @@ class gameEnv(object):
         steering_angle = float(state['steering_angle'])
         new_angle = 0 # forward
         a = self.steering_angle_list
-        if action == Action.TurnRight or action == Reverse.TurnRight:
+        if action == Action.TurnRight:
             new_angle = min(40, min(a[a > steering_angle]))
-        elif action == Action.TurnLeft or action == Reverse.TurnLeft:
+        elif action == Reverse.TurnRight:
+            new_angle = 40
+        elif action == Action.TurnLeft:
             new_angle = -min(40, min(a[a > abs(min(0, steering_angle))]))
+        elif action == Reverse.TurnLeft:
+            new_angle = -40
 
         if action >= 0:
             self._send_cmd(new_angle, 1.0) # dan said always keep highest spped

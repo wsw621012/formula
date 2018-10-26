@@ -74,52 +74,9 @@ class ImageProcessor(object):
         return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     @staticmethod
-    def find_arrow_dir(target, img = None):
-        im_width = target.shape[1]
-        im_height = target.shape[0]
-        for x in range(im_width):
-            if target[(im_height - 1), x] != 76:
-                return None
-        red_start_y = 0
-        for x in [0, (im_width - 1)]:
-            for y in range(im_height):
-                y = im_height - y - 1
-                if target[y, x] != 76:
-                    if red_start_y < (y + 1):
-                        red_start_y = y + 1
-                    break
-        red_block = target[red_start_y:im_height, 0:im_width]
-        if img is not None:
-            cv2.line(img, (0, red_start_y), (im_width - 1, red_start_y), 255)
-        b, r, w = ImageProcessor._color_rate(red_block)
-        if w == 0:
-            return None
-
-        _x, _y = [], []
-        for y in range(red_block.shape[0]):
-            for x in range(red_block.shape[1]):
-                if red_block[y, x] == 255:
-                    _y.append(y)
-                    _x.append(x)
-                    break
-
-        if len(_x) < 5:
-            return None
-
-
-        m, _ = np.polyfit(_x, _y, 1)
-        print("m = %.2f" % m)
-        if m < 0:
-            return "F"
-        elif m > 0:
-            return "B"
-
-        return None
-
-    @staticmethod
     def find_wall_angle(target, debug = False):
         _y, _x = np.where(target == 0)
-        if len(_y) < 10:
+        if len(_y) < 20:
             return None, -1, -1, -1, -1
         if len(_y) == (target.shape[0] * target.shape[1]):
             return 180, 0, target.shape[0] - 1, target.shape[1] - 1, target.shape[0] - 1
@@ -130,9 +87,9 @@ class ImageProcessor(object):
         right_x = max(_x)
         right_y = max(_y[_x == right_x])
 
-        max_y = max(_y)
-        if max_y > (max([left_y,right_y]) + 5): # strange shape so use max-y to be rectangle
-            left_y = left_x = max_y
+        max_y_set = _x[_y >= max([left_y, right_y])]
+        if len(max_y_set) > 10: # strange shape so use max-y to be rectangle
+            left_y = left_x = max(_y)
 
         #if debug:
         #    print("wall: (%d, %d) ~ (%d, %d)" % (left_x, left_y, right_x, right_y))
@@ -155,10 +112,11 @@ class ImageProcessor(object):
 
     @staticmethod
     def test_red_angle(target, debug = False):
-        if not (255 in target): # full red
-            return 180
-        if not (76 in target): # full white
-            return 180
+        black, red, white = ImageProcessor._color_rate(target)
+        if black == 0 and white == 0: # full red
+            return 0.
+        if black == 0 and red == 0: # full white
+            return 0.
 
         _h, _w = target.shape
 
@@ -170,19 +128,28 @@ class ImageProcessor(object):
             if len(ly) < 10:
                 continue
             lx = _lx[ly]
-            m, _ = np.polyfit(lx, ly, 1)
-            print("left angle = %.2f" % math.degrees(math.atan(-1./m)))
-
+            a, b = np.polyfit(lx, ly, 1) # y = ax + b => (0, b) ~ (-b/a, 0)
+            if debug:
+                print("left-angle : %.2f" % math.degrees(math.atan(-1./a)))
+                if a < 0:
+                    cv2.line(target, (0, int(b)), (int(-b / a), 0), 0, 2)
+                else:
+                    cv2.line(target, (_w-1, int(a*(_w-1)+b)), (int(-b / a), 0), 0, 2)
         #right-bound of red region
         lr_target = np.fliplr(target)
-        _rx = _w - np.argmin(lr_target, axis = 1) - 1
-        _ry = np.arange(_h)[_rx != (_w - 1)]
+        _rx = np.argmin(lr_target, axis = 1)
+        _ry = np.arange(_h)[_rx != 0]
         for ry in np.split(_ry, np.where(np.diff(_ry) != 1)[0]+1):
             if len(ry) < 10:
                 continue
-            rx = _rx[ry]
-            m, _ = np.polyfit(rx, ry, 1)
-            print("right angle = %.2f" % math.degrees(math.atan(-1./m)))
+            rx = _w - 1 - _rx[ry]
+            a, b = np.polyfit(rx, ry, 1)
+            if debug:
+                print("right-angle : %.2f" % math.degrees(math.atan(-1./a)))
+                if a < 0:
+                    cv2.line(target, (0, int(b)), (int(-b / a), 0), 0, 2)
+                else:
+                    cv2.line(target, (_w-1, int(a*(_w-1)+b)), (int(-b / a), 0), 0, 2)
 
     @staticmethod
     def find_road_angle(target, debug = False):
@@ -241,6 +208,8 @@ class ImageProcessor(object):
 
             if len(none_x) == 0:
                 m, _ = np.polyfit(line_x, line_y, 1)
+                if m == 0:
+                    return 180, 76
                 return math.degrees(math.atan(-1./m)), 76
             if min(none_x) > 0 and max(none_x) < (target.shape[1] - 1):
                 px = (min(none_x) + max(none_x)) // 2
@@ -251,16 +220,18 @@ class ImageProcessor(object):
                 m, _ = np.polyfit(line_x, line_y, 1)
                 return math.degrees(math.atan(-1./m)), 76
 
-        return None, None
+        return None, target[height - 1, width // 2]
 
     @staticmethod
-    def find_red_angle(im_gray, debug = False):
+    def find_color_angle(im_gray, debug = False):
+
         middle_img   = ImageProcessor._crop_gray(im_gray, 0.6, 0.8)
         image_height = middle_img.shape[0]
         image_width  = middle_img.shape[1]
-        camera_x     = image_width / 2
-
-        _y, _x = np.where(middle_img == 76)
+        camera_x     = image_width // 2
+        color = im_gray[im_gray.shape[0] - 1, camera_x]
+        # _y, _x = np.where(middle_img == 76)
+        _y, _x = np.where(middle_img == color)
 
         px = 0.0
         if _x is not None and len(_x) > 0:
