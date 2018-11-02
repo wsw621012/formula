@@ -35,8 +35,8 @@ class ImageProcessor(object):
         for color in [0, 76, 255]:
             y, _ = np.where(img_gray == color)
             color_rate = 0
-            if y is not None or len(y) > 0:
-                color_rate = len(y) / total_size
+            if y is not None and y.size > 0:
+                color_rate = y.size / total_size
             total_rate.append(color_rate)
         return total_rate[0], total_rate[1], total_rate[2]
 
@@ -75,11 +75,15 @@ class ImageProcessor(object):
 
     @staticmethod
     def find_wall_angle(target, debug = False):
-        _y, _x = np.where(target == 0)
-        if len(_y) < 20:
+        b, r, w = ImageProcessor._color_rate(target)
+        if b == 0:
             return None, -1, -1, -1, -1
-        if len(_y) == (target.shape[0] * target.shape[1]):
+        if r == 0 and w == 0:
             return 180, 0, target.shape[0] - 1, target.shape[1] - 1, target.shape[0] - 1
+
+        _y, _x = np.where(target == 0)
+        if min(_y) > 0: # not wall
+            return None, -1, -1, -1, -1
 
         left_x = min(_x)
         left_y = max(_y[_x == left_x])
@@ -87,23 +91,31 @@ class ImageProcessor(object):
         right_x = max(_x)
         right_y = max(_y[_x == right_x])
 
+        if b < r and b < w:
+            # valid road is horizontal
+            if not 76 in target[0,:]:
+                _w = target.shape[1]
+                target[target == 0] = 255
+                ly = np.argmin(target, axis=0)
+                lx = np.arange(target.shape[1])[ly != 0]
+                ly = ly[lx]
+                m, _ = np.polyfit(lx, ly, 1)
+                angle = math.degrees(math.atan(-1./m))
+                return angle, left_x, left_y, right_x, right_y
+
         max_y_set = _x[_y >= max([left_y, right_y])]
-        if len(max_y_set) > 10: # strange shape so use max-y to be rectangle
+        if max_y_set.size > 10: # strange shape so use max-y to be rectangle
             left_y = left_x = max(_y)
 
         #if debug:
         #    print("wall: (%d, %d) ~ (%d, %d)" % (left_x, left_y, right_x, right_y))
+        if right_x == left_x:
+            return 0., left_x, left_y, right_x, right_y
+        if right_y == left_y:
+            return 90.,  left_x, left_y, right_x, right_y
 
-        if right_x != left_x:
-            m, _ = np.polyfit([left_x, right_x], [left_y, right_y], 1)
-            if m == 0:
-                angle = 180
-            else:
-                angle = math.degrees(math.atan(-1./m))
-        else:
-            #m, _ = np.polyfit([left_y, right_y], [left_x, right_x], 1)
-            #angle = math.degrees(math.atan(-m))
-            angle = 0
+        m, _ = np.polyfit([left_x, right_x], [left_y, right_y], 1)
+        angle = math.degrees(math.atan(-1./m))
 
         if debug:
             print("angle = %.2f" % angle)
@@ -125,7 +137,7 @@ class ImageProcessor(object):
         _lx = np.argmin(target, axis = 1)
         _ly = np.arange(_h)[_lx != 0]
         for ly in np.split(_ly, np.where(np.diff(_ly) != 1)[0]+1):
-            if len(ly) < 10:
+            if ly.size < 10:
                 continue
             lx = _lx[ly]
             a, b = np.polyfit(lx, ly, 1) # y = ax + b => (0, b) ~ (-b/a, 0)
@@ -140,7 +152,7 @@ class ImageProcessor(object):
         _rx = np.argmin(lr_target, axis = 1)
         _ry = np.arange(_h)[_rx != 0]
         for ry in np.split(_ry, np.where(np.diff(_ry) != 1)[0]+1):
-            if len(ry) < 10:
+            if ry.size < 10:
                 continue
             rx = _w - 1 - _rx[ry]
             a, b = np.polyfit(rx, ry, 1)
@@ -154,10 +166,10 @@ class ImageProcessor(object):
     @staticmethod
     def find_road_angle(target, debug = False):
         _y, _x = np.where(target == 76) # red-part
-        if len(_y) == (target.shape[0] * target.shape[1]): # full-red
+        if (not 0 in target) and (not 255 in target): # full-red
             return 180, 76
 
-        if len(_y) == 0: # full-white
+        if (not 0 in target) and (not 76 in target): # full-white
             return 180, 255
 
         width = target.shape[1]
@@ -167,12 +179,12 @@ class ImageProcessor(object):
             line_x, line_y, none_x = [], [], []
             for x in range(target.shape[1]):
                 y_set = _y[np.where(_x == x)]
-                if len(y_set) > 0:
+                if y_set.size > 0:
                     line_y.append(max(y_set))
                     line_x.append(x)
                 else:
                     none_x.append(x)
-            if len(none_x) == 0:
+            if none_x.size == 0:
                 m, _ = np.polyfit(line_x, line_y, 1)
                 return math.degrees(math.atan(-1./m)), 255
             if min(none_x) > 0 and max(none_x) < (target.shape[1] - 1):
@@ -189,10 +201,10 @@ class ImageProcessor(object):
             for x in range(target.shape[1]):
                 y_set = _y[np.where(_x == x)]
                 # skip different red blocks
-                if len(y_set) < target.shape[0] - min(y_set) - 20:
+                if y_set.size < target.shape[0] - min(y_set) - 20:
                     fake_min_y = min(y_set)
                     y_set = y_set[np.where(y_set > (fake_min_y + 5))]
-                    if len(y_set) < target.shape[0] - min(y_set) - 20:
+                    if y_set.size < target.shape[0] - min(y_set) - 20:
                         continue
                 min_y = min(y_set)
                 if min_y > 0:
@@ -202,11 +214,11 @@ class ImageProcessor(object):
                     none_x.append(x)
                     if debug:
                         print("x:%d, y:0" % x)
-            if len(line_x) < 2:
+            if line_x.size < 2:
                 ImageProcessor.save_image('./frames', target, suffix = 'no_linex')
                 return 180, 76
 
-            if len(none_x) == 0:
+            if none_x.size == 0:
                 m, _ = np.polyfit(line_x, line_y, 1)
                 if m == 0:
                     return 180, 76
@@ -234,7 +246,7 @@ class ImageProcessor(object):
         _y, _x = np.where(middle_img == color)
 
         px = 0.0
-        if _x is not None and len(_x) > 0:
+        if _x is not None and _x.size > 0:
             px = np.mean(_x)
         if np.isnan(px):
             return 0.0

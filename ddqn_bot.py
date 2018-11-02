@@ -101,15 +101,15 @@ def update_job(myBuffer, op_holder, queue, sess, mainQN, targetQN):
             sess.run(op)
 
 
-batch_size = 64 #How many experiences to use for each training step.
-update_freq = 200 #How often to perform a training step.
+batch_size = 32 #How many experiences to use for each training step.
+update_freq = 2000 #How often to perform a training step.
 y = .99 #Discount factor on the target Q-values
 startE = 1 #Starting chance of random action
 endE = 0.1 #Final chance of random action
-annealing_steps = 1000. #How many steps of training to reduce startE to endE.
-num_episodes = 100 #How many episodes of game environment to train network with.
-pre_train_steps = 4000 #How many steps of random actions before training begins.
-max_epLength = 2700 #The max allowed length of our episode.
+annealing_steps = 100000. #How many steps of training to reduce startE to endE.
+num_episodes = 200 #How many episodes of game environment to train network with.
+pre_train_steps = 5000 #How many steps of random actions before training begins.
+max_epLength = 3000 #The max allowed length of our episode.
 load_model = True #Whether to load a saved model.
 h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
 tau = 0.001 #Rate to update target network toward primary network
@@ -118,7 +118,7 @@ class Worker():
     def __init__(self, env):
         self.env = env
         self.stop = False
-        self.frame_count = 0
+        #self.frame_count = 0
         self.coach_actions = []
         self.last_wall_angle = None
         self.update_channel = Queue()
@@ -129,7 +129,9 @@ class Worker():
         self.last_bottom_line = []
 
     def _detect_wall(self, im_gray, steering_angle, action):
-        target = ImageProcessor._crop_gray(im_gray, 0.57, 1.0)
+
+        target = ImageProcessor._crop_gray(im_gray, 0.58, 1.0)
+
         wall_angle, lx, ly, rx, ry = ImageProcessor.find_wall_angle(target)
 
         if wall_angle is None:
@@ -142,77 +144,74 @@ class Worker():
 
         # degrees:74 is atan(320 / 95)
         # degrees:60 is atan(160 / 95)
-        if action >= 0:
+        if action >= 0 and abs(wall_angle) < 90:
             self.last_wall_angle = wall_angle
 
         wall_distance = target.shape[0] - ((ly + ry) // 2)
         #if (ly + ry) // 2 >= 25: # too close wall
-
         if wall_distance < 70:
-            if self.last_wall_angle is not None:
-                if abs(self.last_wall_angle) > 40:
-                    if action < 0: # reversing
-                        if self.last_wall_angle > 0:
-                            self.coach_actions.append(Reverse.TurnLeft)
-                        else:
-                            self.coach_actions.append(Reverse.TurnRight)
-                    else:
-                        if self.last_wall_angle > 0:
-                            self.coach_actions.append(Action.TurnRight)
-                        else:
-                            self.coach_actions.append(Action.TurnLeft)
+            if action < 0:
+                if self.last_wall_angle is None:
+                    self.coach_actions.append(Reverse.Backward)
+                elif self.last_wall_angle > 0:
+                    self.coach_actions.append(Reverse.TurnLeft)
+                else:
+                    self.coach_actions.append(Reverse.TurnRight)
+                return wall_angle
+
+            if lx == 0 and rx == target.shape[1] - 1:
+                if wall_angle > 0:
+                    self.coach_actions.append(Action.TurnRight)
+                    return wall_angle
+                if wall_angle < 0:
+                    self.coach_actions.append(Action.TurnLeft)
                     return wall_angle
 
         if lx > 0 and lx > (target.shape[1] - rx): # obstacle was approach left-hand-side
             #angle = wall_angle
-            #if ly > 5: #wall
-            px = lx // 3
-            angle = math.degrees(math.atan2(px - (target.shape[1] // 2), target.shape[0] - ly))
-            #if steering_angle > angle:
-            self.coach_actions.append(Action.TurnLeft)
-            #else:
-            #    self.coach_actions.append(Action.Forward)
+            if ly == 0:
+                self.coach_actions.append(Action.TurnLeft)
+                return wall_angle
+
+            px = lx * 2 // 3
+            angle = math.degrees(math.atan2(px - (target.shape[1] // 2), target.shape[0]))
+            if steering_angle > angle:
+                self.coach_actions.append(Action.TurnLeft)
+            else:
+                self.coach_actions.append(Action.Forward)
             return angle
 
         if (target.shape[1] - rx - 1) > lx:
             #angle = wall_angle
-            #if ry > 5: #wall
-            px = (target.shape[1] + rx) * 2 // 3
-            angle = math.degrees(math.atan2(px - (target.shape[1] // 2), target.shape[0] - ry))
-            #if steering_angle < angle:
-            self.coach_actions.append(Action.TurnRight)
-            #else:
-            #    self.coach_actions.append(Action.Forward)
+            if ry == 0: #wall
+                self.coach_actions.append(Action.TurnRight)
+                return wall_angle
+
+            px = (target.shape[1] + 2*rx) // 3
+            angle = math.degrees(math.atan2(px - (target.shape[1] // 2), target.shape[0]))
+            if steering_angle < angle:
+                self.coach_actions.append(Action.TurnRight)
+            else:
+                self.coach_actions.append(Action.Forward)
             return angle
-        '''
-        if wall_angle > 0:
-            #if steering_angle > wall_angle:
-            #    self.coach_actions.append(Action.Forward)
-            #else:
-            self.coach_actions.append(Action.TurnRight)
-        else:
-            #if steering_angle < wall_angle:
-            #    self.coach_actions.append(Action.Forward)
-            #else:
-            self.coach_actions.append(Action.TurnLeft)
-        '''
+
         return wall_angle
 
     def processState(self, state, action = 0):
         image = ImageProcessor.preprocess(state['image'])
         del state['image']
-
         im_gray = ImageProcessor._flatten_rgb_to_gray(image)
 
         self.last_bottom_line = self.bottom_line
         self.bottom_line = []
-        _ly = im_gray[-20, :]
+        _ly = im_gray[-1, :]
         for ly in np.split(_ly, np.where(np.diff(_ly) != 0)[0]+1):
             self.bottom_line.append((ly[0], len(ly)))
 
         steering_angle = float(state['steering_angle'])
-        angle, _ = self._detect_wall(im_gray, steering_angle, action), 0
+        angle = self._detect_wall(im_gray, steering_angle, action)
 
+        '''
         pos , prop , sign= self._sign_detection.classify_sign_from_image(image)
         if len(sign) != 0:
             if sign[0] == 5: # right
@@ -221,7 +220,8 @@ class Worker():
             elif sign[0] == 4: #left
                 self.sign_dir = 'left'
                 self.sign_count_down = 15
-
+        '''
+        '''
         if self.sign_count_down > 0:
             if self.sign_dir == 'right':
                 if self.last_wall_angle is None and len(self.coach_actions) == 0:
@@ -233,15 +233,12 @@ class Worker():
             if self.sign_count_down == 0:
                 print("sign action over")
                 self.sign_dir = None
-
-        if angle == None:
-            angle, _ = ImageProcessor.find_road_angle(im_gray)
-
-            if angle is None:
-                angle = ImageProcessor.find_color_angle(im_gray)
+        '''
+        #if angle == None:
+        #    angle = ImageProcessor.find_color_angle(im_gray)
 
         # no wall
-        state['angle'] = str(angle)
+        #state['angle'] = str(angle)
         image = image[100:240, 0:320]
         return np.reshape(scipy.misc.imresize(image, [84,84]), [21168]) / 255.0
 
@@ -251,54 +248,32 @@ class Worker():
 	    err /= float(icon1.shape[0] * icon2.shape[1])
 	    return err
 
-    def reward_and_coach(self, state, state_):
-        #print("mse err: %.2f -> %.2f" % (float(state['mse']), float(state_['mse'])))
-        last_steering_angle = float(state['steering_angle'])
-        steering_angle = float(state_['steering_angle'])
-        if (last_steering_angle > 0 and steering_angle < 0) or (last_steering_angle < 0 and steering_angle > 0):
-            return -1
-        #if self.last_wall_angle is not None:
-        #    return -1
+    def reward(self, state, state_):
 
-        color_seq = [item[0] for item in self.bottom_line]
-        if 0 in color_seq:
-            return -1
+        #last_steering_angle, steering_angle = float(state['steering_angle']), float(state_['steering_angle'])
+        #previous_angle, current_angle = float(state['angle']), float(state_['angle'])
 
+        color_seq, last_color_seq = [item[0] for item in self.bottom_line], [item[0] for item in self.last_bottom_line]
         color_count, last_color_count = len(self.bottom_line), len(self.last_bottom_line)
 
-        if color_count == 3 and color_seq[1] == 76:
-            if self.bottom_line[1][1] < 100:
-                return 1
-            #else:
-            #    print("middle-red-wide: %d" % self.bottom_line[1][1])
+        if not np.array_equal(color_seq, last_color_seq):
+            #if color_count == 1 and last_color_count == 1:
+            return -1.
 
-        previous_angle = float(state['angle'])
-        current_angle = float(state_['angle'])
+        if color_count > 1: # in the same relative-position
+            offset = self.last_bottom_line[0][1] - self.bottom_line[0][1]
+            #print('shift %d pixel' % offset)
 
-        last_color_seq = [item[0] for item in self.last_bottom_line]
-        if color_count == 1 and last_color_count == 1:
-            if color_seq[0] != last_color_seq[0]:
-                return -1
-
-            if abs(current_angle) > 40:
-                return -1
-
-            if current_angle > 0 and previous_angle > current_angle:
+            if abs(offset) < 5:
                 return 1.
 
-            if current_angle < 0 and previous_angle < current_angle:
-                return 1.
-
-            if abs(current_angle) < self.env.get_mix_steering_angle():
-                if abs(previous_angle) < self.env.get_mix_steering_angle():
-                    if steering_angle == 0:
-                        return 1.
-
-        if color_count == last_color_count and color_seq[color_count // 2] == last_color_seq[color_count // 2]:
-            if abs(self.last_bottom_line[color_count // 2][1] - self.bottom_line[color_count // 2][1]) < 8: # { 8 = 100 * tan(4.5)}
+            if color_count == 3 and color_seq[1] == 76 and self.bottom_line[1][1] < 113: # in the middle way
                 return 1
 
-        return -1
+        if (0 in color_seq):
+            return -1.
+
+        return 0
 
     def run(self, path):
         tf.reset_default_graph()
@@ -376,6 +351,8 @@ class Worker():
                 j = 0
                 while j < max_epLength:    #Choose an action by greedily (with e chance of random action) from the Q-network
                     j += 1
+                    is_coach_action = False
+
                     if len(self.coach_actions) > 0:
                         a = self.coach_actions.pop(0)
                         coach_count += 1
@@ -386,7 +363,9 @@ class Worker():
 
                     state_, d = self.env.step(state, a)
                     s1 = self.processState(state_, a)
-                    r = self.reward_and_coach(state, state_)
+
+
+                    r = self.reward(state, state_)
                     round_step_counter += 1
 
                     if a >= 0:
@@ -407,11 +386,11 @@ class Worker():
                     s = s1
                     state = state_
                     if d == True:
+                        myBuffer.add(episodeBuffer.buffer)
                         break
 
                 self.env.reset()
                 print("round_step_counter = %d, coach rate = %.2f%%" % (round_step_counter, (100*coach_count/round_step_counter)))
-                myBuffer.add(episodeBuffer.buffer)
                 rList.append(rAll/round_step_counter)
                 #Periodically save the model.
                 if (i + 1) % 4 == 0:
@@ -420,7 +399,7 @@ class Worker():
                     print("Saved Model: %s" % model_path)
 
                 if len(rList) > 4:
-                    print(total_steps,np.mean(rList[-4:]))
+                    print("%d: %.2f, %.2f" %(total_steps, rAll, np.mean(rList[-4:])))
 
                 if self.stop == True:
                     break
