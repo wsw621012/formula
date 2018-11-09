@@ -102,9 +102,9 @@ def update_job(myBuffer, op_holder, queue, sess, mainQN, targetQN):
 
 
 batch_size = 32 #How many experiences to use for each training step.
-update_freq = 500 #How often to perform a training step.
+update_freq = 1024 #How often to perform a training step.
 y = .99 #Discount factor on the target Q-values
-startE = 0.5 #Starting chance of random action
+startE = 0.9 #Starting chance of random action
 endE = 0.1 #Final chance of random action
 annealing_steps = 100000. #How many steps of training to reduce startE to endE.
 num_episodes = 200 #How many episodes of game environment to train network with.
@@ -150,7 +150,7 @@ class Worker():
             if lx > 0 and lx > (target.shape[1] - rx):
                 self.coach_actions.append(Reverse.TurnRight)
             elif (target.shape[1] - rx - 1) > lx:
-                self.coach_actions.append(Action.TurnRight)
+                self.coach_actions.append(Reverse.TurnLeft)
             else:
                 self.coach_actions.append(Reverse.Backward)
             return 180
@@ -415,7 +415,7 @@ class Worker():
                     print("Saved Model: %s" % model_path)
 
                 if len(rList) > 4:
-                    print("%d: %.2f, %.2f" %(total_steps, rAll, np.mean(rList[-4:])))
+                    print("(err:%.2f)%d: %.2f, %.2f" %(e, total_steps, rAll, np.mean(rList[-4:])))
 
                 if self.stop == True:
                     break
