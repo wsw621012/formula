@@ -102,14 +102,14 @@ def update_job(myBuffer, op_holder, queue, sess, mainQN, targetQN):
 
 
 batch_size = 32 #How many experiences to use for each training step.
-update_freq = 2000 #How often to perform a training step.
+update_freq = 500 #How often to perform a training step.
 y = .99 #Discount factor on the target Q-values
-startE = 1 #Starting chance of random action
+startE = 0.5 #Starting chance of random action
 endE = 0.1 #Final chance of random action
 annealing_steps = 100000. #How many steps of training to reduce startE to endE.
 num_episodes = 200 #How many episodes of game environment to train network with.
-pre_train_steps = 5000 #How many steps of random actions before training begins.
-max_epLength = 3000 #The max allowed length of our episode.
+pre_train_steps = 500 #How many steps of random actions before training begins.
+max_epLength = 1000 #The max allowed length of our episode.
 load_model = True #Whether to load a saved model.
 h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
 tau = 0.001 #Rate to update target network toward primary network
@@ -127,10 +127,14 @@ class Worker():
         self.sign_count_down = 0
         self.bottom_line = []
         self.last_bottom_line = []
+        #self.last_steering_angle = 0
 
-    def _detect_wall(self, im_gray, steering_angle, action):
+    def _detect_wall(self, im_gray, action):
 
-        target = ImageProcessor._crop_gray(im_gray, 0.58, 1.0)
+        target = ImageProcessor._crop_gray(im_gray, 0.6, 1.0)
+        self.env.is_finished = ImageProcessor.find_final_line(target)
+        if self.env.is_finished:
+            return None
 
         wall_angle, lx, ly, rx, ry = ImageProcessor.find_wall_angle(target)
 
@@ -142,14 +146,24 @@ class Worker():
             self.coach_actions.append(Reverse.Backward)
             return 180
 
+        if 0 in target[0,:] and (ry == (target.shape[0] - 1) or ly == (target.shape[0] - 1)):
+            if lx > 0 and lx > (target.shape[1] - rx):
+                self.coach_actions.append(Reverse.TurnRight)
+            elif (target.shape[1] - rx - 1) > lx:
+                self.coach_actions.append(Action.TurnRight)
+            else:
+                self.coach_actions.append(Reverse.Backward)
+            return 180
+
         # degrees:74 is atan(320 / 95)
         # degrees:60 is atan(160 / 95)
         if action >= 0 and abs(wall_angle) < 90:
             self.last_wall_angle = wall_angle
 
-        wall_distance = target.shape[0] - ((ly + ry) // 2)
+        #wall_distance = target.shape[0] - ((ly + ry) // 2)
+        wall_distance = target.shape[0] - max([ly, ry])
         #if (ly + ry) // 2 >= 25: # too close wall
-        if wall_distance < 70:
+        if wall_distance < 75:
             if action < 0:
                 if self.last_wall_angle is None:
                     self.coach_actions.append(Reverse.Backward)
@@ -167,34 +181,15 @@ class Worker():
                     self.coach_actions.append(Action.TurnLeft)
                     return wall_angle
 
-        if lx > 0 and lx > (target.shape[1] - rx): # obstacle was approach left-hand-side
-            #angle = wall_angle
-            if ly == 0:
-                self.coach_actions.append(Action.TurnLeft)
-                return wall_angle
+        if lx > 0 and lx > (target.shape[1] - rx) and max(ly, ry) > 7: # obstacle was approach left-hand-side
+            self.coach_actions.append(Action.TurnLeft)
+            return wall_angle
 
-            px = lx * 2 // 3
-            angle = math.degrees(math.atan2(px - (target.shape[1] // 2), target.shape[0]))
-            if steering_angle > angle:
-                self.coach_actions.append(Action.TurnLeft)
-            else:
-                self.coach_actions.append(Action.Forward)
-            return angle
+        if (target.shape[1] - rx - 1) > lx and max(ly, ry) > 7:
+            self.coach_actions.append(Action.TurnRight)
+            return wall_angle
 
-        if (target.shape[1] - rx - 1) > lx:
-            #angle = wall_angle
-            if ry == 0: #wall
-                self.coach_actions.append(Action.TurnRight)
-                return wall_angle
-
-            px = (target.shape[1] + 2*rx) // 3
-            angle = math.degrees(math.atan2(px - (target.shape[1] // 2), target.shape[0]))
-            if steering_angle < angle:
-                self.coach_actions.append(Action.TurnRight)
-            else:
-                self.coach_actions.append(Action.Forward)
-            return angle
-
+        #print("no coach action when wall_angle is %.2f" % wall_angle)
         return wall_angle
 
     def processState(self, state, action = 0):
@@ -208,8 +203,9 @@ class Worker():
         for ly in np.split(_ly, np.where(np.diff(_ly) != 0)[0]+1):
             self.bottom_line.append((ly[0], len(ly)))
 
-        steering_angle = float(state['steering_angle'])
-        angle = self._detect_wall(im_gray, steering_angle, action)
+        #steering_angle = float(state['steering_angle'])
+        #angle = self._detect_wall(im_gray, steering_angle, action)
+        angle = self._detect_wall(im_gray, action)
 
         '''
         pos , prop , sign= self._sign_detection.classify_sign_from_image(image)
@@ -257,7 +253,11 @@ class Worker():
         color_count, last_color_count = len(self.bottom_line), len(self.last_bottom_line)
 
         if not np.array_equal(color_seq, last_color_seq):
-            #if color_count == 1 and last_color_count == 1:
+            if color_count > 1 and last_color_count > 1:
+                if color_seq[0] == last_color_seq[0] and abs(self.last_bottom_line[0][1] - self.bottom_line[0][1]) < 5:
+                    return 1
+                if color_seq[-1] == last_color_seq[-1] and abs(self.last_bottom_line[-1][1] - self.bottom_line[-1][1]) < 5:
+                    return 1
             return -1.
 
         if color_count > 1: # in the same relative-position
@@ -270,7 +270,7 @@ class Worker():
             if color_count == 3 and color_seq[1] == 76 and self.bottom_line[1][1] < 113: # in the middle way
                 return 1
 
-        if (0 in color_seq):
+        if (0 in color_seq) and (not self.env.is_finished):
             return -1.
 
         return 0
@@ -291,7 +291,9 @@ class Worker():
 
             self.coach_actions = []
             state = self.env.get_state()
+            state['steering_angle'] = 0
             s = self.processState(state)
+            self.last_steering_angle = 0
             #d = False
             while True:    #Choose an action by greedily (with e chance of random action) from the Q-network
                 if len(self.coach_actions) > 0:
@@ -304,7 +306,7 @@ class Worker():
 
             self.env.reset()
 
-    def train(self, path):
+    def train(self, path, debug = False):
         tf.reset_default_graph()
 
         mainQN = Qnetwork(h_size, env)
@@ -338,64 +340,78 @@ class Worker():
                 print('Loading Model...')
                 ckpt = tf.train.get_checkpoint_state(path)
                 saver.restore(sess,ckpt.model_checkpoint_path)
-            for i in range(num_episodes):
+            for eps in range(num_episodes):
                 round_step_counter = 0
                 coach_count = 0
-
                 self.coach_actions = []
-                episodeBuffer = experience_buffer()
                 state = self.env.get_state()
+                state['steering_angle'] = 0
                 s = self.processState(state)
+                self.env.is_finished = False
                 d = False
                 rAll = 0
-                j = 0
-                while j < max_epLength:    #Choose an action by greedily (with e chance of random action) from the Q-network
-                    j += 1
-                    is_coach_action = False
+                last_action = 0
+                while not d:
+                    j = 0
+                    episodeBuffer = experience_buffer()
+                    while j < max_epLength:    #Choose an action by greedily (with e chance of random action) from the Q-network
+                        j += 1
+                        if len(self.coach_actions) > 0:
+                            a = self.coach_actions.pop(0)
+                            coach_count += 1
+                            if debug:
+                                print("XX %s(%d)" % ((Action(a).name if a>=0 else Reverse(a).name), round_step_counter))
 
-                    if len(self.coach_actions) > 0:
-                        a = self.coach_actions.pop(0)
-                        coach_count += 1
-                    elif np.random.rand(1) < e or total_steps < pre_train_steps:
-                        a = np.random.randint(0, len(Action))
-                    else:
-                        a = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:[s]})[0]
+                        elif np.random.rand(1) < e or total_steps < pre_train_steps:
+                            a = np.random.randint(0, len(Action))
+                            if debug:
+                                print("-- %s(%d)" % (Action(a).name, round_step_counter))
+                        else:
+                            a = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:[s]})[0]
+                            if debug:
+                                print("OO %s(%d)" % (Action(a).name, round_step_counter))
 
-                    state_, d = self.env.step(state, a)
-                    s1 = self.processState(state_, a)
+                        state_, d = self.env.step(state, a)
+                        s1 = self.processState(state_, a)
 
+                        if len(self.coach_actions) > 0:
+                            r = -1
+                        else:
+                            r = self.reward(state, state_)
+                        round_step_counter += 1
 
-                    r = self.reward(state, state_)
-                    round_step_counter += 1
+                        if a >= 0:
+                            total_steps += 1
+                            episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
+                            if total_steps == pre_train_steps + 1:
+                                print("pre-trainning end.")
 
-                    if a >= 0:
-                        total_steps += 1
-                        episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
-                        if total_steps == pre_train_steps + 1:
-                            print("pre-trainning end.")
+                        if total_steps > pre_train_steps:
+                            if e > endE:
+                                e -= stepDrop
 
-                    if total_steps > pre_train_steps:
-                        if e > endE:
-                            e -= stepDrop
+                            if total_steps % (update_freq) == 0:
+                                self.update_channel.put_nowait(batch_size)
+                                #updateTarget(targetOps,sess) #Update the target network toward the primary network.
 
-                        if total_steps % (update_freq) == 0:
-                            self.update_channel.put_nowait(batch_size)
-                            #updateTarget(targetOps,sess) #Update the target network toward the primary network.
+                        rAll += r
+                        s = s1
+                        state = state_
+                        if d:
+                            if round_step_counter < 10:
+                                d = False
+                                self.env.is_finished = False
+                            else:
+                                break
+                    if d:
+                        print("round:%d, step_counter = %d, coach rate = %.2f%%" % (eps, round_step_counter, (100*coach_count/round_step_counter)))
+                    myBuffer.add(episodeBuffer.buffer)
 
-                    rAll += r
-                    s = s1
-                    state = state_
-                    if d == True:
-                        myBuffer.add(episodeBuffer.buffer)
-                        break
-
-                self.env.reset()
-                print("round_step_counter = %d, coach rate = %.2f%%" % (round_step_counter, (100*coach_count/round_step_counter)))
                 rList.append(rAll/round_step_counter)
                 #Periodically save the model.
-                if (i + 1) % 4 == 0:
-                    model_path = '%s/model-%d.ckpt' % (path, i)
-                    saver.save(sess,path+'/model-'+str(i)+'.ckpt')
+                if (eps + 1) % 4 == 0:
+                    model_path = '%s/model-%d.ckpt' % (path, eps)
+                    saver.save(sess,path+'/model-'+str(eps)+'.ckpt')
                     print("Saved Model: %s" % model_path)
 
                 if len(rList) > 4:
@@ -403,7 +419,9 @@ class Worker():
 
                 if self.stop == True:
                     break
-            saver.save(sess,path+'/model-'+str(i)+'.ckpt')
+
+                self.env.reset()
+            saver.save(sess,path+'/model-'+str(eps)+'.ckpt')
             updateThread.join()
 
         #print("Percent of succesful episodes: " + str(sum(rList)/num_episodes) + "%")
@@ -431,7 +449,7 @@ if __name__ == "__main__":
 
     else:
         print("training mode...")
-        worker_work = lambda: worker.train(path)
+        worker_work = lambda: worker.train(path, debug = False)
         t = threading.Thread(target=(worker_work))
         t.start()
 

@@ -13,8 +13,8 @@ class gameEnv(object):
         self.is_finished = False
         #self.steering_angle_list = [2.86, 10.36, 37.24, 45.0]
         self.steering_angle_list = np.asarray([7.47, 15.07, 22.95, 31.33, 40.54])
-        self.lap = 1
-        self.elapse = 0.
+        #self.lap = 1
+        #self.elapse = 0.
 
         @sio.on('telemetry')
         def telemetry(sid, msg):
@@ -32,6 +32,7 @@ class gameEnv(object):
         return self.steering_angle_list[0]
 
     def _process_msg(self, msg):
+        '''
         if msg['status'] != '0' or int(msg['lap']) > 1 or float(msg['time']) > 300:
             self.is_finished = True
 
@@ -39,7 +40,7 @@ class gameEnv(object):
             print("lap:%d, spend %.2f sec" % (int(msg['lap'])-1, (float(msg['time'])-self.elapse)))
             self.lap += 1
             self.elapse = float(msg['time'])
-
+        '''
         self.dashboard.put(msg)
 
         cmd = self.command.get()
@@ -63,8 +64,8 @@ class gameEnv(object):
 
     def _send_restart(self):
         self.is_finished = False
-        self.lap = 1
-        self.elapse = 0.
+        #self.lap = 1
+        #self.elapse = 0.
         self.sio.emit(
             "restart",
             data={},
@@ -92,7 +93,9 @@ class gameEnv(object):
             self._send_cmd(new_angle, -1.0)
 
         msg = self.dashboard.get()
+        msg['steering_angle'] = new_angle
         return msg, self.is_finished
+
 
     def _send_cmd(self, steering_angle, throttle):
         cmd = {

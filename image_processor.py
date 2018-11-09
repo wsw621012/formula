@@ -74,6 +74,31 @@ class ImageProcessor(object):
         return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     @staticmethod
+    def find_final_line(target):
+        if not (0 in target[-50:-1, :]):
+            return False
+
+        ly = np.argmin(target, axis=0)
+        lx = np.arange(target.shape[1])[ly != 0]
+        #if lx.size < (target.shape[1] - 1):
+            #print("black line size: %d" % lx.size)
+        #    return False
+        if lx.size < target.shape[1] // 2:
+            return False
+
+        ly = ly[lx]
+        count = 0
+        for i in np.arange(lx.size):
+            if target[ly[i], lx[i]] == 0:
+                count += 1
+        if count > target.shape[1] // 2:
+            #print("final line reached!!")
+            return True
+
+        #print('black line is too small: %d' % count)
+        return False
+
+    @staticmethod
     def find_wall_angle(target, debug = False):
         b, r, w = ImageProcessor._color_rate(target)
         if b == 0:
@@ -98,8 +123,14 @@ class ImageProcessor(object):
                 target[target == 0] = 255
                 ly = np.argmin(target, axis=0)
                 lx = np.arange(target.shape[1])[ly != 0]
+                if lx.size < 10:
+                    return 0, left_x, left_y, right_x, right_y
                 ly = ly[lx]
                 m, _ = np.polyfit(lx, ly, 1)
+                if (m >= 0) and (m < 0.1):
+                    return 89, left_x, left_y, right_x, right_y
+                if (m <= 0) and (m > -0.1):
+                    return -89, left_x, left_y, right_x, right_y
                 angle = math.degrees(math.atan(-1./m))
                 return angle, left_x, left_y, right_x, right_y
 
@@ -162,104 +193,3 @@ class ImageProcessor(object):
                     cv2.line(target, (0, int(b)), (int(-b / a), 0), 0, 2)
                 else:
                     cv2.line(target, (_w-1, int(a*(_w-1)+b)), (int(-b / a), 0), 0, 2)
-
-    @staticmethod
-    def find_road_angle(target, debug = False):
-        _y, _x = np.where(target == 76) # red-part
-        if (not 0 in target) and (not 255 in target): # full-red
-            return 180, 76
-
-        if (not 0 in target) and (not 76 in target): # full-white
-            return 180, 255
-
-        width = target.shape[1]
-        height = target.shape[0]
-
-        if not (76 in target[height - 1, :]): # white in bottom
-            line_x, line_y, none_x = [], [], []
-            for x in range(target.shape[1]):
-                y_set = _y[np.where(_x == x)]
-                if y_set.size > 0:
-                    line_y.append(max(y_set))
-                    line_x.append(x)
-                else:
-                    none_x.append(x)
-            if none_x.size == 0:
-                m, _ = np.polyfit(line_x, line_y, 1)
-                return math.degrees(math.atan(-1./m)), 255
-            if min(none_x) > 0 and max(none_x) < (target.shape[1] - 1):
-                px = (min(none_x) + max(none_x)) // 2
-                m = math.atan2(px - (target.shape[1] // 2), target.shape[0])
-                return math.degrees(m), 255
-            #if min(none_x) == 0 or max(none_x) == (target.shape[1] - 1):
-            else:
-                m, _ = np.polyfit(line_x, line_y, 1)
-                return math.degrees(math.atan(-1./m)), 255
-
-        if not (255 in target[height - 1, :]): # red in bottom
-            line_x, line_y, none_x = [], [], []
-            for x in range(target.shape[1]):
-                y_set = _y[np.where(_x == x)]
-                # skip different red blocks
-                if y_set.size < target.shape[0] - min(y_set) - 20:
-                    fake_min_y = min(y_set)
-                    y_set = y_set[np.where(y_set > (fake_min_y + 5))]
-                    if y_set.size < target.shape[0] - min(y_set) - 20:
-                        continue
-                min_y = min(y_set)
-                if min_y > 0:
-                    line_y.append(min_y)
-                    line_x.append(x)
-                else:
-                    none_x.append(x)
-                    if debug:
-                        print("x:%d, y:0" % x)
-            if line_x.size < 2:
-                ImageProcessor.save_image('./frames', target, suffix = 'no_linex')
-                return 180, 76
-
-            if none_x.size == 0:
-                m, _ = np.polyfit(line_x, line_y, 1)
-                if m == 0:
-                    return 180, 76
-                return math.degrees(math.atan(-1./m)), 76
-            if min(none_x) > 0 and max(none_x) < (target.shape[1] - 1):
-                px = (min(none_x) + max(none_x)) // 2
-                m = math.atan2(px - (target.shape[1] // 2), target.shape[0])
-                return math.degrees(m), 76
-            #if min(none_x) == 0 or max(none_x) == (target.shape[1] - 1):
-            else:
-                m, _ = np.polyfit(line_x, line_y, 1)
-                return math.degrees(math.atan(-1./m)), 76
-
-        return None, target[height - 1, width // 2]
-
-    @staticmethod
-    def find_color_angle(im_gray, debug = False):
-
-        middle_img   = ImageProcessor._crop_gray(im_gray, 0.6, 0.8)
-        image_height = middle_img.shape[0]
-        image_width  = middle_img.shape[1]
-        camera_x     = image_width // 2
-        color = im_gray[im_gray.shape[0] - 1, camera_x]
-        # _y, _x = np.where(middle_img == 76)
-        _y, _x = np.where(middle_img == color)
-
-        px = 0.0
-        if _x is not None and _x.size > 0:
-            px = np.mean(_x)
-        if np.isnan(px):
-            return 0.0
-
-        steering_radian = math.atan2(px - camera_x, 3 * image_height)
-
-        if debug:
-            #draw the steering direction
-            print("red angle px = %.2f" % px)
-            cv2.rectangle(im_gray, (int(px) - 10, (im_gray.shape[0] * 6) // 10), (int(px) + 10, (im_gray.shape[0] * 8) // 10), 0, 2)
-            r = im_gray.shape[0]
-            x = im_gray.shape[1] // 2 + int(r * math.sin(steering_radian))
-            y = im_gray.shape[0]    - int(r * math.cos(steering_radian))
-            cv2.line(im_gray, (im_gray.shape[1] // 2, im_gray.shape[0] - 1), (x, y), 0, 2)
-
-        return math.degrees(steering_radian)
