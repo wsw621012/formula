@@ -102,14 +102,14 @@ def update_job(myBuffer, op_holder, queue, sess, mainQN, targetQN):
 
 
 batch_size = 32 #How many experiences to use for each training step.
-update_freq = 500 #How often to perform a training step.
+update_freq = 2048 #How often to perform a training step.
 y = .99 #Discount factor on the target Q-values
-startE = 0.5 #Starting chance of random action
+startE = 0.7 #Starting chance of random action
 endE = 0.1 #Final chance of random action
-annealing_steps = 100000. #How many steps of training to reduce startE to endE.
-num_episodes = 200 #How many episodes of game environment to train network with.
-pre_train_steps = 500 #How many steps of random actions before training begins.
-max_epLength = 1000 #The max allowed length of our episode.
+annealing_steps = 700000. #How many steps of training to reduce startE to endE.
+num_episodes = 120 #How many episodes of game environment to train network with.
+pre_train_steps = 10000 #How many steps of random actions before training begins.
+max_epLength = 10000 #The max allowed length of our episode.
 load_model = True #Whether to load a saved model.
 h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
 tau = 0.001 #Rate to update target network toward primary network
@@ -127,7 +127,7 @@ class Worker():
         self.sign_count_down = 0
         self.bottom_line = []
         self.last_bottom_line = []
-        #self.last_steering_angle = 0
+        self.reward_offset = 4
 
     def _detect_wall(self, im_gray, action):
 
@@ -150,7 +150,7 @@ class Worker():
             if lx > 0 and lx > (target.shape[1] - rx):
                 self.coach_actions.append(Reverse.TurnRight)
             elif (target.shape[1] - rx - 1) > lx:
-                self.coach_actions.append(Action.TurnRight)
+                self.coach_actions.append(Reverse.TurnLeft)
             else:
                 self.coach_actions.append(Reverse.Backward)
             return 180
@@ -199,7 +199,7 @@ class Worker():
 
         self.last_bottom_line = self.bottom_line
         self.bottom_line = []
-        _ly = im_gray[-1, :]
+        _ly = im_gray[-6, :]
         for ly in np.split(_ly, np.where(np.diff(_ly) != 0)[0]+1):
             self.bottom_line.append((ly[0], len(ly)))
 
@@ -252,11 +252,14 @@ class Worker():
         color_seq, last_color_seq = [item[0] for item in self.bottom_line], [item[0] for item in self.last_bottom_line]
         color_count, last_color_count = len(self.bottom_line), len(self.last_bottom_line)
 
+        if (0 in color_seq) and (not self.env.is_finished):
+            return -1.
+
         if not np.array_equal(color_seq, last_color_seq):
             if color_count > 1 and last_color_count > 1:
-                if color_seq[0] == last_color_seq[0] and abs(self.last_bottom_line[0][1] - self.bottom_line[0][1]) < 5:
+                if color_seq[0] == last_color_seq[0] and abs(self.last_bottom_line[0][1] - self.bottom_line[0][1]) < self.reward_offset:
                     return 1
-                if color_seq[-1] == last_color_seq[-1] and abs(self.last_bottom_line[-1][1] - self.bottom_line[-1][1]) < 5:
+                if color_seq[-1] == last_color_seq[-1] and abs(self.last_bottom_line[-1][1] - self.bottom_line[-1][1]) < self.reward_offset:
                     return 1
             return -1.
 
@@ -264,18 +267,15 @@ class Worker():
             offset = self.last_bottom_line[0][1] - self.bottom_line[0][1]
             #print('shift %d pixel' % offset)
 
-            if abs(offset) < 5:
+            if abs(offset) < self.reward_offset:
                 return 1.
 
             if color_count == 3 and color_seq[1] == 76 and self.bottom_line[1][1] < 113: # in the middle way
                 return 1
 
-        if (0 in color_seq) and (not self.env.is_finished):
-            return -1.
+        return -1
 
-        return 0
-
-    def run(self, path):
+    def run(self):
         tf.reset_default_graph()
         mainQN = Qnetwork(h_size, env)
         #targetQN = Qnetwork(h_size, env)
@@ -286,8 +286,8 @@ class Worker():
         #Make a path for our model to be saved in.
         with tf.Session() as sess:
             sess.run(init)
-            ckpt = tf.train.get_checkpoint_state('./candidate_models')
-            saver.restore(sess,ckpt.model_checkpoint_path)
+            ckpt = tf.train.get_checkpoint_state(".")
+            saver.restore(sess, ckpt.model_checkpoint_path)
 
             self.coach_actions = []
             state = self.env.get_state()
@@ -351,71 +351,83 @@ class Worker():
                 d = False
                 rAll = 0
                 last_action = 0
-                while not d:
-                    j = 0
-                    episodeBuffer = experience_buffer()
-                    while j < max_epLength:    #Choose an action by greedily (with e chance of random action) from the Q-network
-                        j += 1
-                        if len(self.coach_actions) > 0:
-                            a = self.coach_actions.pop(0)
-                            coach_count += 1
-                            if debug:
-                                print("XX %s(%d)" % ((Action(a).name if a>=0 else Reverse(a).name), round_step_counter))
+                ran_action = np.random.choice(3, 1, p=[0.4, 0.25, 0.35])[0]
+                print('random action:%s' % Action(ran_action).name)
+                episodeBuffer = experience_buffer()
+                j = 0
+                while j < max_epLength:    #Choose an action by greedily (with e chance of random action) from the Q-network
+                    j += 1
+                    if len(self.coach_actions) > 0:
+                        a = self.coach_actions.pop(0)
+                        coach_count += 1
+                        if debug:
+                            print("XX %s(%d)" % ((Action(a).name if a>=0 else Reverse(a).name), round_step_counter))
 
-                        elif np.random.rand(1) < e or total_steps < pre_train_steps:
-                            a = np.random.randint(0, len(Action))
-                            if debug:
-                                print("-- %s(%d)" % (Action(a).name, round_step_counter))
-                        else:
-                            a = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:[s]})[0]
-                            if debug:
-                                print("OO %s(%d)" % (Action(a).name, round_step_counter))
+                    elif np.random.rand(1) < e or total_steps < pre_train_steps:
+                        a = np.random.randint(0, len(Action)+1)
+                        if a >= len(Action): # 50% specific action vs 25% for each others
+                            #a = Action.Forward
+                            a = ran_action
 
-                        state_, d = self.env.step(state, a)
-                        s1 = self.processState(state_, a)
+                        if debug:
+                            print("-- %s(%d)" % (Action(a).name, round_step_counter))
+                    else:
+                        a = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:[s]})[0]
+                        if debug:
+                            print("OO %s(%d)" % (Action(a).name, round_step_counter))
 
-                        if len(self.coach_actions) > 0:
-                            r = -1
-                        else:
-                            r = self.reward(state, state_)
-                        round_step_counter += 1
+                    state_, d = self.env.step(state, a)
+                    s1 = self.processState(state_, a)
 
-                        if a >= 0:
-                            total_steps += 1
-                            episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
-                            if total_steps == pre_train_steps + 1:
-                                print("pre-trainning end.")
+                    if len(self.coach_actions) > 0:
+                        r = -1
+                    else:
+                        r = self.reward(state, state_)
+                    round_step_counter += 1
 
-                        if total_steps > pre_train_steps:
-                            if e > endE:
-                                e -= stepDrop
+                    if a >= 0:
+                        total_steps += 1
+                        episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
+                        if total_steps == pre_train_steps + 1:
+                            print("pre-trainning end.")
 
-                            if total_steps % (update_freq) == 0:
-                                self.update_channel.put_nowait(batch_size)
-                                #updateTarget(targetOps,sess) #Update the target network toward the primary network.
+                    if total_steps > pre_train_steps:
+                        if e > endE:
+                            e -= stepDrop
 
-                        rAll += r
-                        s = s1
-                        state = state_
-                        if d:
-                            if round_step_counter < 10:
-                                d = False
-                                self.env.is_finished = False
-                            else:
-                                break
+                        if total_steps % (update_freq) == 0:
+                            self.update_channel.put_nowait(batch_size)
+                            #updateTarget(targetOps,sess) #Update the target network toward the primary network.
+
+                    rAll += r
+                    s = s1
+                    state = state_
                     if d:
-                        print("round:%d, step_counter = %d, coach rate = %.2f%%" % (eps, round_step_counter, (100*coach_count/round_step_counter)))
+                        if round_step_counter < 10:
+                            d = False
+                            self.env.is_finished = False
+                        else:
+                            print("round:%d, step_counter = %d, coach rate = %.2f%%" % (eps, round_step_counter, (100*coach_count/round_step_counter)))
+                            break
+                    #if (len(rList) < 1) or (rAll/round_step_counter > max(rList)):
+
+                    #if len(rList) >= 1:
+                    #    print("add to learn - r:%.2f(%.2f)." % (rAll/round_step_counter, max(rList)))
+
+                #if d and ((len(rList) < 4 ) or (rAll/round_step_counter > np.mean(rList[-4:]))):
+                if d:
                     myBuffer.add(episodeBuffer.buffer)
-
-                rList.append(rAll/round_step_counter)
+                    rList.append(rAll/round_step_counter)
+                else:
+                    print("not finished or score lower than mean score.")
                 #Periodically save the model.
-                if (eps + 1) % 4 == 0:
-                    model_path = '%s/model-%d.ckpt' % (path, eps)
-                    saver.save(sess,path+'/model-'+str(eps)+'.ckpt')
-                    print("Saved Model: %s" % model_path)
+                #if (eps + 1) % 4 == 0:
+                model_path = '%s/model-%d.ckpt' % (path, eps)
+                saver.save(sess,path+'/model-'+str(eps)+'.ckpt')
+                print("Saved Model: %s" % model_path)
 
-                if len(rList) > 4:
-                    print("%d: %.2f, %.2f" %(total_steps, rAll, np.mean(rList[-4:])))
+                if len(rList) >= 4:
+                    print("(err:%.2f)%d, %d, %.2f" %(e, round_step_counter, rAll, np.mean(rList[-4:])))
 
                 if self.stop == True:
                     break
@@ -442,8 +454,8 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1 and sys.argv[1] == 'run':
         print("execution mode...")
-        path = './candidate_models'
-        worker_work = lambda: worker.run(path)
+        #path = './candidate_models'
+        worker_work = lambda: worker.run()
         t = threading.Thread(target=(worker_work))
         t.start()
 
