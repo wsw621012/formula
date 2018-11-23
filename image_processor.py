@@ -75,7 +75,7 @@ class ImageProcessor(object):
 
     @staticmethod
     def find_final_line(target):
-        if not (0 in target[-50:-1, :]):
+        if not (0 in target[-75:-1, :]):
             return False
 
         ly = np.argmin(target, axis=0)

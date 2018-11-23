@@ -104,10 +104,10 @@ def update_job(myBuffer, op_holder, queue, sess, mainQN, targetQN):
 batch_size = 32 #How many experiences to use for each training step.
 update_freq = 2048 #How often to perform a training step.
 y = .99 #Discount factor on the target Q-values
-startE = 0.7 #Starting chance of random action
+startE = 0.9 #Starting chance of random action
 endE = 0.1 #Final chance of random action
-annealing_steps = 700000. #How many steps of training to reduce startE to endE.
-num_episodes = 120 #How many episodes of game environment to train network with.
+annealing_steps = 800000. #How many steps of training to reduce startE to endE.
+num_episodes = 100 #How many episodes of game environment to train network with.
 pre_train_steps = 10000 #How many steps of random actions before training begins.
 max_epLength = 10000 #The max allowed length of our episode.
 load_model = True #Whether to load a saved model.
@@ -199,13 +199,14 @@ class Worker():
 
         self.last_bottom_line = self.bottom_line
         self.bottom_line = []
-        _ly = im_gray[-6, :]
+        _ly = im_gray[-60, :]
         for ly in np.split(_ly, np.where(np.diff(_ly) != 0)[0]+1):
             self.bottom_line.append((ly[0], len(ly)))
 
         #steering_angle = float(state['steering_angle'])
         #angle = self._detect_wall(im_gray, steering_angle, action)
         angle = self._detect_wall(im_gray, action)
+        state['wall'] = 'n' if angle is None else 'y'
 
         '''
         pos , prop , sign= self._sign_detection.classify_sign_from_image(image)
@@ -248,6 +249,8 @@ class Worker():
 
         #last_steering_angle, steering_angle = float(state['steering_angle']), float(state_['steering_angle'])
         #previous_angle, current_angle = float(state['angle']), float(state_['angle'])
+        if state_['wall'] == 'y':
+            return -1
 
         color_seq, last_color_seq = [item[0] for item in self.bottom_line], [item[0] for item in self.last_bottom_line]
         color_count, last_color_count = len(self.bottom_line), len(self.last_bottom_line)
@@ -270,7 +273,7 @@ class Worker():
             if abs(offset) < self.reward_offset:
                 return 1.
 
-            if color_count == 3 and color_seq[1] == 76 and self.bottom_line[1][1] < 113: # in the middle way
+            if color_count == 3 and color_seq[1] == 76 and self.bottom_line[1][1] < 65: # in the middle way
                 return 1
 
         return -1
@@ -278,7 +281,6 @@ class Worker():
     def run(self):
         tf.reset_default_graph()
         mainQN = Qnetwork(h_size, env)
-        #targetQN = Qnetwork(h_size, env)
 
         init = tf.global_variables_initializer()
         saver = tf.train.Saver()
@@ -351,8 +353,6 @@ class Worker():
                 d = False
                 rAll = 0
                 last_action = 0
-                ran_action = np.random.choice(3, 1, p=[0.4, 0.25, 0.35])[0]
-                print('random action:%s' % Action(ran_action).name)
                 episodeBuffer = experience_buffer()
                 j = 0
                 while j < max_epLength:    #Choose an action by greedily (with e chance of random action) from the Q-network
@@ -364,10 +364,7 @@ class Worker():
                             print("XX %s(%d)" % ((Action(a).name if a>=0 else Reverse(a).name), round_step_counter))
 
                     elif np.random.rand(1) < e or total_steps < pre_train_steps:
-                        a = np.random.randint(0, len(Action)+1)
-                        if a >= len(Action): # 50% specific action vs 25% for each others
-                            #a = Action.Forward
-                            a = ran_action
+                        a = np.random.choice(3, 1, p=[0.3, 0.4, 0.3])[0]
 
                         if debug:
                             print("-- %s(%d)" % (Action(a).name, round_step_counter))
@@ -427,7 +424,9 @@ class Worker():
                 print("Saved Model: %s" % model_path)
 
                 if len(rList) >= 4:
-                    print("(err:%.2f)%d, %d, %.2f" %(e, round_step_counter, rAll, np.mean(rList[-4:])))
+                    print("(random:%.2f%%)%d, %d, %.2f" %(e*100, round_step_counter, rAll, np.mean(rList[-4:])))
+                else:
+                    print("(random:%.2f%%)%d, %d, %.2f" %(e*100, round_step_counter, rAll, np.mean(rList)))
 
                 if self.stop == True:
                     break
