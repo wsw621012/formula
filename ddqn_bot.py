@@ -205,8 +205,7 @@ class Worker():
             self.bottom_line.append((ly[0], len(ly)))
 
         angle = self._detect_wall(im_gray, action)
-        state['wall'] = 'n' if angle is None else 'y'
-
+        
         '''
         pos , prop , sign= self._sign_detection.classify_sign_from_image(image)
         if len(sign) != 0:
@@ -248,9 +247,6 @@ class Worker():
 
         #last_steering_angle, steering_angle = float(state['steering_angle']), float(state_['steering_angle'])
         #previous_angle, current_angle = float(state['angle']), float(state_['angle'])
-        if state_['wall'] == 'y':
-            return -1
-
         color_seq, last_color_seq = [item[0] for item in self.bottom_line], [item[0] for item in self.last_bottom_line]
         color_count, last_color_count = len(self.bottom_line), len(self.last_bottom_line)
 
@@ -425,9 +421,9 @@ class Worker():
                 print("Saved Model: %s" % model_path)
 
                 if len(rList) >= 4:
-                    print("(random:%.2f%%)%d, %d, %.2f" %(e*100, round_step_counter, rAll, np.mean(rList[-4:])))
+                    print("(random:%d%%)%d, %d, %.2f" %(int(e*100), round_step_counter, rAll, np.mean(rList[-4:])))
                 else:
-                    print("(random:%.2f%%)%d, %d, %.2f" %(e*100, round_step_counter, rAll, np.mean(rList)))
+                    print("(random:%d%%)%d, %d, %.2f" %(int(e*100), round_step_counter, rAll, np.mean(rList)))
 
                 if self.stop == True:
                     break
