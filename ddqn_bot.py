@@ -128,10 +128,11 @@ class Worker():
         self.bottom_line = []
         self.last_bottom_line = []
         self.reward_offset = 4
+        self.top_line = []
 
     def _detect_wall(self, im_gray, action):
-
         target = ImageProcessor._crop_gray(im_gray, 0.6, 1.0)
+        self.top_line = target[0, :]
         self.env.is_finished = ImageProcessor.find_final_line(target)
         if self.env.is_finished:
             return None
@@ -203,8 +204,6 @@ class Worker():
         for ly in np.split(_ly, np.where(np.diff(_ly) != 0)[0]+1):
             self.bottom_line.append((ly[0], len(ly)))
 
-        #steering_angle = float(state['steering_angle'])
-        #angle = self._detect_wall(im_gray, steering_angle, action)
         angle = self._detect_wall(im_gray, action)
         state['wall'] = 'n' if angle is None else 'y'
 
@@ -273,9 +272,11 @@ class Worker():
             if abs(offset) < self.reward_offset:
                 return 1.
 
-            if color_count == 3 and color_seq[1] == 76 and self.bottom_line[1][1] < 65: # in the middle way
+            if color_count == 3 and color_seq[1] == 76 and self.bottom_line[1][1] < 50: # in the middle way
                 return 1
-
+        else: #only one color, check top line color size
+            if (np.unique(self.top_line).size > 1):
+                return 1
         return -1
 
     def run(self):
