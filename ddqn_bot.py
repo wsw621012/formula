@@ -14,7 +14,8 @@ from action import Action, Reverse
 from game_env import gameEnv
 from image_processor import ImageProcessor
 from count_sign_classify import CountDetection
-
+from datetime import datetime
+import time
 #env = gameEnv(partial=False,size=5)
 
 class Qnetwork():
@@ -59,7 +60,7 @@ class Qnetwork():
         self.updateModel = self.trainer.minimize(self.loss)
 
 class experience_buffer():
-    def __init__(self, buffer_size = 50000):
+    def __init__(self, buffer_size = 10000):
         self.buffer = []
         self.buffer_size = buffer_size
 
@@ -67,6 +68,9 @@ class experience_buffer():
         if len(self.buffer) + len(experience) >= self.buffer_size:
             self.buffer[0:(len(experience)+len(self.buffer))-self.buffer_size] = []
         self.buffer.extend(experience)
+
+    def size(self):
+        return len(self.buffer)
 
     def sample(self,size):
         return np.reshape(np.array(random.sample(self.buffer,size)),[size,5])
@@ -101,13 +105,13 @@ def update_job(myBuffer, op_holder, queue, sess, mainQN, targetQN):
             sess.run(op)
 
 
-batch_size = 32 #How many experiences to use for each training step.
-update_freq = 2048 #How often to perform a training step.
+batch_size = 256 #How many experiences to use for each training step.
+#update_freq = 2048 #How often to perform a training step.
 y = .99 #Discount factor on the target Q-values
 startE = 0.9 #Starting chance of random action
 endE = 0.1 #Final chance of random action
 annealing_steps = 800000. #How many steps of training to reduce startE to endE.
-num_episodes = 100 #How many episodes of game environment to train network with.
+num_episodes = 120 #How many episodes of game environment to train network with.
 pre_train_steps = 10000 #How many steps of random actions before training begins.
 max_epLength = 10000 #The max allowed length of our episode.
 load_model = True #Whether to load a saved model.
@@ -128,11 +132,11 @@ class Worker():
         self.bottom_line = []
         self.last_bottom_line = []
         self.reward_offset = 4
-        self.top_line = []
+        #self.top_line = []
 
     def _detect_wall(self, im_gray, action):
         target = ImageProcessor._crop_gray(im_gray, 0.6, 1.0)
-        self.top_line = target[0, :]
+        #self.top_line = target[0, :]
         self.env.is_finished = ImageProcessor.find_final_line(target)
         if self.env.is_finished:
             return None
@@ -182,11 +186,11 @@ class Worker():
                     self.coach_actions.append(Action.TurnLeft)
                     return wall_angle
 
-        if lx > 0 and lx > (target.shape[1] - rx) and max(ly, ry) > 7: # obstacle was approach left-hand-side
+        if lx > 0 and lx > (target.shape[1] - rx) and max(ly, ry) > 5: # obstacle was approach left-hand-side
             self.coach_actions.append(Action.TurnLeft)
             return wall_angle
 
-        if (target.shape[1] - rx - 1) > lx and max(ly, ry) > 7:
+        if (target.shape[1] - rx - 1) > lx and max(ly, ry) > 5:
             self.coach_actions.append(Action.TurnRight)
             return wall_angle
 
@@ -200,12 +204,13 @@ class Worker():
 
         self.last_bottom_line = self.bottom_line
         self.bottom_line = []
-        _ly = im_gray[-60, :]
+        #_ly = im_gray[-60, :]
+        _ly = im_gray[-75, :]
         for ly in np.split(_ly, np.where(np.diff(_ly) != 0)[0]+1):
             self.bottom_line.append((ly[0], len(ly)))
 
         angle = self._detect_wall(im_gray, action)
-        
+
         '''
         pos , prop , sign= self._sign_detection.classify_sign_from_image(image)
         if len(sign) != 0:
@@ -268,11 +273,12 @@ class Worker():
             if abs(offset) < self.reward_offset:
                 return 1.
 
-            if color_count == 3 and color_seq[1] == 76 and self.bottom_line[1][1] < 50: # in the middle way
+            #if color_count == 3 and color_seq[1] == 76 and self.bottom_line[1][1] < 50: # in the middle way
+            if color_count == 3 and color_seq[1] == 76: # in the middle way
                 return 1
-        else: #only one color, check top line color size
-            if (np.unique(self.top_line).size > 1):
-                return 1
+        #else: #only one color, check top line color size
+        #    if (np.unique(self.top_line).size > 1):
+        #        return 1
         return -1
 
     def run(self):
@@ -373,10 +379,10 @@ class Worker():
                     state_, d = self.env.step(state, a)
                     s1 = self.processState(state_, a)
 
-                    if len(self.coach_actions) > 0:
-                        r = -1
-                    else:
-                        r = self.reward(state, state_)
+                    #if len(self.coach_actions) > 0:
+                    #    r = -1
+                    #else:
+                    r = self.reward(state, state_)
                     round_step_counter += 1
 
                     if a >= 0:
@@ -389,8 +395,8 @@ class Worker():
                         if e > endE:
                             e -= stepDrop
 
-                        if total_steps % (update_freq) == 0:
-                            self.update_channel.put_nowait(batch_size)
+                        #if total_steps % (update_freq) == 0:
+                            #self.update_channel.put_nowait(batch_size)
                             #updateTarget(targetOps,sess) #Update the target network toward the primary network.
 
                     rAll += r
@@ -409,15 +415,19 @@ class Worker():
                     #    print("add to learn - r:%.2f(%.2f)." % (rAll/round_step_counter, max(rList)))
 
                 #if d and ((len(rList) < 4 ) or (rAll/round_step_counter > np.mean(rList[-4:]))):
+
+                print("post-processing....")
                 if d:
                     myBuffer.add(episodeBuffer.buffer)
                     rList.append(rAll/round_step_counter)
                 else:
                     print("not finished or score lower than mean score.")
+                if myBuffer.size() > batch_size:
+                    self.update_channel.put_nowait(batch_size)
                 #Periodically save the model.
                 #if (eps + 1) % 4 == 0:
                 model_path = '%s/model-%d.ckpt' % (path, eps)
-                saver.save(sess,path+'/model-'+str(eps)+'.ckpt')
+                saver.save(sess, model_path)
                 print("Saved Model: %s" % model_path)
 
                 if len(rList) >= 4:
@@ -427,9 +437,11 @@ class Worker():
 
                 if self.stop == True:
                     break
-
+                time.sleep(3)
                 self.env.reset()
-            saver.save(sess,path+'/model-'+str(eps)+'.ckpt')
+
+            model_path = "%s/final-model-%s.ckpt" % (path, datetime.now().strftime('%m%d%H'))
+            saver.save(sess, model_path)
             updateThread.join()
 
         #print("Percent of succesful episodes: " + str(sum(rList)/num_episodes) + "%")
